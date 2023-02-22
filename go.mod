@@ -306,6 +306,8 @@ replace git.apache.org/thrift.git => github.com/apache/thrift v0.0.0-20180902110
 // Use fork of gocql that has gokit logs and Prometheus metrics.
 replace github.com/gocql/gocql => github.com/grafana/gocql v0.0.0-20200605141915-ba5dc39ece85
 
+replace github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
+
 // Replace memberlist with Grafana's fork which includes some fixes that haven't been merged upstream yet
 replace github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20220714140823-09ffed8adbbe
 

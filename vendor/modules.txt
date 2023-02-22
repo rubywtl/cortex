@@ -316,8 +316,8 @@ github.com/beorn7/perks/quantile
 # github.com/blang/semver/v4 v4.0.0
 ## explicit; go 1.14
 github.com/blang/semver/v4
-# github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf
-## explicit; go 1.18
+# github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
+## explicit
 github.com/bradfitz/gomemcache/memcache
 # github.com/caio/go-tdigest v3.1.0+incompatible
 ## explicit
@@ -1983,6 +1983,7 @@ sigs.k8s.io/yaml/goyaml.v3
 # github.com/weaveworks/common => github.com/cortexproject/weaveworks-common v0.0.0-20250806170222-876764c695f2
 # git.apache.org/thrift.git => github.com/apache/thrift v0.0.0-20180902110319-2566ecd5d999
 # github.com/gocql/gocql => github.com/grafana/gocql v0.0.0-20200605141915-ba5dc39ece85
+# github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
 # github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20220714140823-09ffed8adbbe
 # github.com/vimeo/galaxycache => github.com/thanos-community/galaxycache v0.0.0-20211122094458-3a32041a1f1e
 # github.com/go-openapi/spec => github.com/go-openapi/spec v0.20.6

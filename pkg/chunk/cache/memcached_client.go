@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sony/gobreaker"
 	"github.com/thanos-io/thanos/pkg/discovery/dns"
+	"github.com/thanos-io/thanos/pkg/tls"
 
 	util_log "github.com/cortexproject/cortex/pkg/util/log"
 )
@@ -65,17 +66,23 @@ type memcachedClient struct {
 
 // MemcachedClientConfig defines how a MemcachedClient should be constructed.
 type MemcachedClientConfig struct {
-	Host           string        `yaml:"host"`
-	Service        string        `yaml:"service"`
-	Addresses      string        `yaml:"addresses"` // EXPERIMENTAL.
-	Timeout        time.Duration `yaml:"timeout"`
-	MaxIdleConns   int           `yaml:"max_idle_conns"`
-	MaxItemSize    int           `yaml:"max_item_size"`
-	UpdateInterval time.Duration `yaml:"update_interval"`
-	ConsistentHash bool          `yaml:"consistent_hash"`
-	CBFailures     uint          `yaml:"circuit_breaker_consecutive_failures"`
-	CBTimeout      time.Duration `yaml:"circuit_breaker_timeout"`  // reset error count after this long
-	CBInterval     time.Duration `yaml:"circuit_breaker_interval"` // remain closed for this long after CBFailures errors
+	Host                  string        `yaml:"host"`
+	Service               string        `yaml:"service"`
+	Addresses             string        `yaml:"addresses"` // EXPERIMENTAL.
+	Timeout               time.Duration `yaml:"timeout"`
+	MaxIdleConns          int           `yaml:"max_idle_conns"`
+	MaxItemSize           int           `yaml:"max_item_size"`
+	UpdateInterval        time.Duration `yaml:"update_interval"`
+	ConsistentHash        bool          `yaml:"consistent_hash"`
+	CBFailures            uint          `yaml:"circuit_breaker_consecutive_failures"`
+	CBTimeout             time.Duration `yaml:"circuit_breaker_timeout"`  // reset error count after this long
+	CBInterval            time.Duration `yaml:"circuit_breaker_interval"` // remain closed for this long after CBFailures errors
+	TLSEnabled            bool          `yaml:"tls_enabled"`
+	TLSCertPath           string        `yaml:"tls_cert_path"`
+	TLSKeyPath            string        `yaml:"tls_key_path"`
+	TLSCAPath             string        `yaml:"tls_ca_path"`
+	TLSServerName         string        `yaml:"tls_ca_name"`
+	TLSInsecureSkipVerify bool          `yaml:"tls_insecure_skip_verify"`
 }
 
 // RegisterFlagsWithPrefix adds the flags required to config this to the given FlagSet
@@ -91,6 +98,12 @@ func (cfg *MemcachedClientConfig) RegisterFlagsWithPrefix(prefix, description st
 	f.DurationVar(&cfg.CBTimeout, prefix+"memcached.circuit-breaker-timeout", 10*time.Second, description+"Duration circuit-breaker remains open after tripping (if zero then 60 seconds is used).")
 	f.DurationVar(&cfg.CBInterval, prefix+"memcached.circuit-breaker-interval", 10*time.Second, description+"Reset circuit-breaker counts after this long (if zero then never reset).")
 	f.IntVar(&cfg.MaxItemSize, prefix+"memcached.max-item-size", 0, description+"The maximum size of an item stored in memcached. Bigger items are not stored. If set to 0, no maximum size is enforced.")
+	f.BoolVar(&cfg.TLSEnabled, prefix+"tls-enabled", false, "Enable TLS in the memcached client. This flag needs to be enabled when any other TLS flag is set. If set to false, insecure connection to memcached server will be used.")
+	f.StringVar(&cfg.TLSCertPath, prefix+"tls-cert-path", "", "Path to the client certificate file, which will be used for authenticating with the server. Also requires the key path to be configured.")
+	f.StringVar(&cfg.TLSKeyPath, prefix+"tls-key-path", "", "Path to the key file for the client certificate. Also requires the client certificate to be configured.")
+	f.StringVar(&cfg.TLSCAPath, prefix+"tls-ca-path", "", "Path to the CA certificates file to validate server certificate against. If not set, the host's root CA certificates are used.")
+	f.StringVar(&cfg.TLSServerName, prefix+"tls-server-name", "", "Override the expected name on the server certificate.")
+	f.BoolVar(&cfg.TLSInsecureSkipVerify, prefix+"tls-insecure-skip-verify", false, "Skip validating server certificate.")
 }
 
 // NewMemcachedClient creates a new MemcacheClient that gets its server list
@@ -103,7 +116,14 @@ func NewMemcachedClient(cfg MemcachedClientConfig, name string, r prometheus.Reg
 		selector = &memcache.ServerList{}
 	}
 
-	client := memcache.NewFromSelector(selector)
+	var client *memcache.Client
+	if cfg.TLSEnabled {
+		tlsConfig, _ := tls.NewClientConfig(logger, cfg.TLSCertPath, cfg.TLSKeyPath, cfg.TLSCAPath, cfg.TLSServerName, cfg.TLSInsecureSkipVerify)
+		client = memcache.NewWithTLSFromSelector(tlsConfig, selector)
+	} else {
+		client = memcache.NewFromSelector(selector)
+	}
+
 	client.Timeout = cfg.Timeout
 	client.MaxIdleConns = cfg.MaxIdleConns
 
@@ -141,7 +161,7 @@ func NewMemcachedClient(cfg MemcachedClientConfig, name string, r prometheus.Reg
 		}),
 	}
 	if cfg.CBFailures > 0 {
-		newClient.DialContext = newClient.dialViaCircuitBreaker
+		newClient.DialTimeout = newClient.dialViaCircuitBreaker
 	}
 
 	if len(cfg.Addresses) > 0 {
@@ -163,7 +183,7 @@ func (c *memcachedClient) circuitBreakerStateChange(name string, from gobreaker.
 	level.Info(c.logger).Log("msg", "circuit-breaker state change", "name", name, "from-state", from, "to-state", to)
 }
 
-func (c *memcachedClient) dialViaCircuitBreaker(_ context.Context, network, address string) (net.Conn, error) {
+func (c *memcachedClient) dialViaCircuitBreaker(network, address string, timeout time.Duration) (net.Conn, error) {
 	c.Lock()
 	cb := c.cbs[address]
 	if cb == nil {
@@ -181,7 +201,7 @@ func (c *memcachedClient) dialViaCircuitBreaker(_ context.Context, network, addr
 	c.Unlock()
 
 	conn, err := cb.Execute(func() (interface{}, error) {
-		return net.DialTimeout(network, address, c.cbTimeout)
+		return net.DialTimeout(network, address, timeout)
 	})
 	if err != nil {
 		return nil, err
