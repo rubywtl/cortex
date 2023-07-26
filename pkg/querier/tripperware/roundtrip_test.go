@@ -308,7 +308,7 @@ cortex_query_frontend_queries_total{op="query", source="api", user="1"} 1
 		},
 		{
 			path:             querySubqueryStepSizeTooSmall,
-			expectedErr:      httpgrpc.Errorf(http.StatusBadRequest, ErrSubQueryStepTooSmall, 11000),
+			expectedErr:      httpgrpc.Errorf(http.StatusBadRequest, ErrSubQueryStepTooSmall, 11000, 30*24*60),
 			limits:           defaultOverrides,
 			maxSubQuerySteps: 11000,
 			userAgent:        fmt.Sprintf("%s/%s", RulerUserAgent, version.Version),
@@ -360,6 +360,8 @@ cortex_query_frontend_queries_total{op="query", source="api", user="1"} 1
 				time.Minute,
 				tc.maxSubQuerySteps,
 				0,
+				false,
+				100000,
 			)
 			resp, err := tw(downstream).RoundTrip(req)
 			if tc.expectedErr == nil {

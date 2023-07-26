@@ -117,6 +117,8 @@ func NewQueryTripperware(
 	defaultSubQueryInterval time.Duration,
 	maxSubQuerySteps int64,
 	lookbackDelta time.Duration,
+	enablePromQLExperimentalFunctions bool,
+	maxSubQueryTotalSteps int,
 ) Tripperware {
 
 	// Per tenant query metrics.
@@ -189,7 +191,7 @@ func NewQueryTripperware(
 				if maxSubQuerySteps > 0 && (isQuery || isQueryRange) {
 					query := r.FormValue("query")
 					// Check subquery step size.
-					if err := SubQueryStepSizeCheck(query, defaultSubQueryInterval, maxSubQuerySteps); err != nil {
+					if err := SubQueryStepSizeCheck(query, defaultSubQueryInterval, int(maxSubQuerySteps), maxSubQueryTotalSteps); err != nil {
 						return nil, err
 					}
 				}

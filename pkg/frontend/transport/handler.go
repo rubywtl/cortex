@@ -81,6 +81,8 @@ type HandlerConfig struct {
 	MaxBodySize               int64         `yaml:"max_body_size"`
 	QueryStatsEnabled         bool          `yaml:"query_stats_enabled"`
 	EnabledRulerQueryStatsLog bool          `yaml:"enabled_ruler_query_stats_log"`
+
+	DefaultEvaluationInterval time.Duration `yaml:"-"`
 }
 
 func (cfg *HandlerConfig) RegisterFlags(f *flag.FlagSet) {
@@ -505,6 +507,11 @@ func (f *Handler) reportQueryStats(r *http.Request, source, userID string, query
 	}
 	if query := queryString.Get("query"); len(query) > 0 {
 		logMessage = append(logMessage, "query_length", len(query))
+		totalSubquerySteps, maxSubquerySteps := tripperware.GetSubQueryStepsFromQuery(query, f.cfg.DefaultEvaluationInterval)
+		if totalSubquerySteps > 0 {
+			logMessage = append(logMessage, "total_subquery_steps", totalSubquerySteps)
+			logMessage = append(logMessage, "max_subquery_steps", maxSubquerySteps)
+		}
 	}
 	if ua := r.Header.Get("User-Agent"); len(ua) > 0 {
 		logMessage = append(logMessage, "user_agent", ua)
