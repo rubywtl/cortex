@@ -4300,6 +4300,11 @@ query_rejection:
 # Maximum size of individual silences that a single user can have. 0 = no limit.
 # CLI flag: -alertmanager.max-silences-size-bytes
 [alertmanager_max_silences_size_bytes: <int> | default = 0]
+  
+# Maximum total number of alerts that the alert manager read api can return. 0 =
+# no limit.
+# CLI flag: -alertmanager.read-api-max-alerts-counts
+[alertmanager_read_api_max_alerts_counts: <int> | default = 0]
 
 # list of rule groups to disable
 [disabled_rule_groups: <list of DisabledRuleGroup> | default = []]

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/alertmanager/api/v2/models"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -48,6 +50,7 @@ import (
 	"github.com/prometheus/alertmanager/timeinterval"
 	"github.com/prometheus/alertmanager/types"
 	"github.com/prometheus/alertmanager/ui"
+	amcallback "github.com/prometheus/alertmanager/util/callback"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	commoncfg "github.com/prometheus/common/config"
@@ -281,6 +284,11 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 		return nil, fmt.Errorf("failed to create alerts: %v", err)
 	}
 
+	var apiCallback amcallback.Callback
+	if am.cfg.Limits != nil {
+		apiCallback = newAPIResponseLimiter(am.cfg.UserID, am.cfg.Limits)
+	}
+
 	am.api, err = api.New(api.Options{
 		Alerts:          am.alerts,
 		Silences:        am.silences,
@@ -294,6 +302,7 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 			return am.dispatcher.Groups(f1, f2)
 		},
 		Concurrency: am.cfg.APIConcurrency,
+		APICallback: apiCallback,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create api: %v", err)
@@ -819,4 +828,57 @@ func alertSize(alert model.Alert) int {
 	}
 	size += len(alert.GeneratorURL)
 	return size
+}
+
+// apiResponseLimiter limits the response received by the Alertmanager client and return to caller.
+type apiResponseLimiter struct {
+	tenant string
+	limits Limits
+}
+
+func newAPIResponseLimiter(tenant string, limits Limits) *apiResponseLimiter {
+	limiter := &apiResponseLimiter{
+		tenant: tenant,
+		limits: limits,
+	}
+
+	return limiter
+}
+
+func (a *apiResponseLimiter) V2GetAlertsCallback(alerts models.GettableAlerts) (models.GettableAlerts, error) {
+	alertLimit := a.limits.AlertmanagerReadAPIMaxAlertsCount(a.tenant)
+
+	alertCount := len(alerts)
+	if alertLimit > 0 && alertCount > alertLimit {
+		alertCount = alertLimit
+	}
+	return alerts[:alertCount], nil
+}
+
+func (a *apiResponseLimiter) V2GetAlertGroupsCallback(alertgroups models.AlertGroups) (models.AlertGroups, error) {
+	alertLimit := a.limits.AlertmanagerReadAPIMaxAlertsCount(a.tenant)
+
+	limitReached := func(count int, limit int) bool {
+		return limit > 0 && limit <= count
+	}
+
+	remainingAlertsCountForCurrentGroup := func(count int, limit int, agAlertCount int) int {
+		if limit > 0 && (limit-count < agAlertCount) {
+			return limit - count
+		}
+		return agAlertCount
+	}
+
+	res := make(models.AlertGroups, 0, len(alertgroups))
+	alertsCount := 0
+
+	for i := 0; i < len(alertgroups) && !limitReached(alertsCount, alertLimit); i++ {
+		agAlertsCount := remainingAlertsCountForCurrentGroup(alertsCount, alertLimit, len(alertgroups[i].Alerts))
+		agAlerts := alertgroups[i].Alerts[:agAlertsCount]
+		alertsCount += agAlertsCount
+		alertgroups[i].Alerts = agAlerts
+		res = append(res, alertgroups[i])
+	}
+
+	return res, nil
 }

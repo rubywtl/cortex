@@ -244,6 +244,7 @@ type Limits struct {
 	AlertmanagerMaxSilencesCount               int                `yaml:"alertmanager_max_silences_count" json:"alertmanager_max_silences_count"`
 	AlertmanagerMaxSilencesSizeBytes           int                `yaml:"alertmanager_max_silences_size_bytes" json:"alertmanager_max_silences_size_bytes"`
 	DisabledRuleGroups                         DisabledRuleGroups `yaml:"disabled_rule_groups" json:"disabled_rule_groups" doc:"nocli|description=list of rule groups to disable"`
+	AlertmanagerReadAPIMaxAlertsCount          int                `yaml:"alertmanager_read_api_max_alerts_counts" json:"alertmanager_read_api_max_alerts_counts"`
 }
 
 // RegisterFlags adds the flags required to config this to the given FlagSet
@@ -352,6 +353,7 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 	f.IntVar(&l.AlertmanagerMaxAlertsSizeBytes, "alertmanager.max-alerts-size-bytes", 0, "Maximum total size of alerts that a single user can have, alert size is the sum of the bytes of its labels, annotations and generatorURL. Inserting more alerts will fail with a log message and metric increment. 0 = no limit.")
 	f.IntVar(&l.AlertmanagerMaxSilencesCount, "alertmanager.max-silences-count", 0, "Maximum number of silences that a single user can have, including expired silences. 0 = no limit.")
 	f.IntVar(&l.AlertmanagerMaxSilencesSizeBytes, "alertmanager.max-silences-size-bytes", 0, "Maximum size of individual silences that a single user can have. 0 = no limit.")
+	f.IntVar(&l.AlertmanagerReadAPIMaxAlertsCount, "alertmanager.read-api-max-alerts-counts", 0, "Maximum total number of alerts that the alert manager read api can return. 0 = no limit.")
 }
 
 // Validate the limits config and returns an error if the validation
@@ -1109,6 +1111,10 @@ func (o *Overrides) DisabledRuleGroups(userID string) DisabledRuleGroups {
 
 func (o *Overrides) RulerExternalLabels(userID string) labels.Labels {
 	return o.GetOverridesForUser(userID).RulerExternalLabels
+}
+
+func (o *Overrides) AlertmanagerReadAPIMaxAlertsCount(userID string) int {
+	return o.GetOverridesForUser(userID).AlertmanagerReadAPIMaxAlertsCount
 }
 
 // GetOverridesForUser returns the per-tenant limits with overrides.

@@ -2294,6 +2294,7 @@ type mockAlertManagerLimits struct {
 	maxAlertsSizeBytes             int
 	maxSilencesCount               int
 	maxSilencesSizeBytes           int
+	maxAPIAlertsCount              int
 }
 
 func (m *mockAlertManagerLimits) AlertmanagerMaxConfigSize(tenant string) int {
@@ -2342,4 +2343,8 @@ func (m *mockAlertManagerLimits) AlertmanagerMaxSilencesCount(_ string) int {
 
 func (m *mockAlertManagerLimits) AlertmanagerMaxSilenceSizeBytes(_ string) int {
 	return m.maxSilencesSizeBytes
+}
+
+func (m *mockAlertManagerLimits) AlertmanagerReadAPIMaxAlertsCount(_ string) int {
+	return m.maxAPIAlertsCount
 }

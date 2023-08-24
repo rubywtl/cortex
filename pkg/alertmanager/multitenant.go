@@ -234,6 +234,9 @@ type Limits interface {
 
 	// AlertmanagerMaxSilenceSizeBytes returns the maximum size of an individual silence. 0 = no limit.
 	AlertmanagerMaxSilenceSizeBytes(tenant string) int
+
+	// AlertmanagerReadAPIMaxAlertsCount return total number of alerts that the alert manager read api can return. 0 = no limit.
+	AlertmanagerReadAPIMaxAlertsCount(tenant string) int
 }
 
 // A MultitenantAlertmanager manages Alertmanager instances for multiple

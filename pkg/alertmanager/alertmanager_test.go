@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/alertmanager/api/v2/models"
+	"github.com/prometheus/alertmanager/util/callback"
+
 	"github.com/go-kit/log"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/silence/silencepb"
@@ -304,5 +307,158 @@ func testLimiter(t *testing.T, limits Limits, ops []callbackOp) {
 
 		assert.Equal(t, op.expectedCount, count, "wrong count, op %d", ix)
 		assert.Equal(t, op.expectedTotalSize, totalSize, "wrong total size, op %d", ix)
+	}
+}
+
+func TestAPIResponseLimiter_V2GetAlertsCallback(t *testing.T) {
+	alerts := []*models.GettableAlert{
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert1"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert2"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert3"},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name     string
+		anames   []string
+		callback callback.Callback
+	}{
+		{
+			"no call back",
+			[]string{"alert1", "alert2", "alert3"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{}),
+		},
+		{
+			"callback: only return 1 alert",
+			[]string{"alert1"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{maxAPIAlertsCount: 1}),
+		},
+		{
+			"callback: only return 2 alerts",
+			[]string{"alert1", "alert2"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{maxAPIAlertsCount: 2}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, _ := tc.callback.V2GetAlertsCallback(alerts)
+			anames := []string{}
+			for _, a := range res {
+				name, ok := a.Labels["alertname"]
+				if ok {
+					anames = append(anames, string(name))
+				}
+			}
+			require.Equal(t, tc.anames, anames)
+		})
+	}
+}
+
+func TestAPIResponseLimiter_V2GetAlertGroupsCallback(t *testing.T) {
+	alerts1 := []*models.GettableAlert{
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert1"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert2"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert3"},
+			},
+		},
+	}
+	alerts2 := []*models.GettableAlert{
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert4"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert5"},
+			},
+		},
+		{
+			Alert: models.Alert{
+				Labels: models.LabelSet{"alertname": "alert6"},
+			},
+		},
+	}
+	ags := []*models.AlertGroup{
+		{
+			Alerts: alerts1,
+			Labels: models.LabelSet{"ag": "ag1"},
+		},
+		{
+			Alerts: alerts2,
+			Labels: models.LabelSet{"ag": "ag2"},
+		},
+	}
+
+	agsNoalert := []*models.AlertGroup{
+		{
+			Labels: models.LabelSet{"ag": "ag1"},
+		},
+	}
+
+	for _, tc := range []struct {
+		inputGroup []*models.AlertGroup
+		name       string
+		anames     []string
+		callback   callback.Callback
+	}{
+		{
+			ags,
+			"no call back",
+			[]string{"alert1", "alert2", "alert3", "alert4", "alert5", "alert6"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{}),
+		},
+		{
+			ags,
+			"callback: only return 3 alert",
+			[]string{"alert1", "alert2", "alert3"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{maxAPIAlertsCount: 3}),
+		},
+		{
+			ags,
+			"callback: only return 5 alerts",
+			[]string{"alert1", "alert2", "alert3", "alert4", "alert5"},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{maxAPIAlertsCount: 5}),
+		},
+		{
+			agsNoalert,
+			"callback: only return 5 alerts",
+			[]string{},
+			newAPIResponseLimiter("test", &mockAlertManagerLimits{maxAPIAlertsCount: 5}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, _ := tc.callback.V2GetAlertGroupsCallback(tc.inputGroup)
+			anames := []string{}
+			for _, a := range res {
+				for _, b := range a.Alerts {
+					name, ok := b.Labels["alertname"]
+					if ok {
+						anames = append(anames, string(name))
+					}
+				}
+			}
+			require.Equal(t, tc.anames, anames)
+		})
 	}
 }
