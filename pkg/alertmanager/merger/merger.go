@@ -1,8 +1,12 @@
 package merger
 
+import (
+	"net/http"
+)
+
 // Merger represents logic for merging response bodies.
 type Merger interface {
-	MergeResponses([][]byte) ([]byte, error)
+	MergeResponses(req *http.Request, bodies [][]byte) ([]byte, error)
 }
 
 // Noop is an implementation of the Merger interface which does not actually merge
@@ -10,7 +14,7 @@ type Merger interface {
 // be used for write requests where the response is either empty or inconsequential.
 type Noop struct{}
 
-func (Noop) MergeResponses(in [][]byte) ([]byte, error) {
+func (Noop) MergeResponses(req *http.Request, in [][]byte) ([]byte, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}

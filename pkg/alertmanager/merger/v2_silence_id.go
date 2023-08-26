@@ -2,6 +2,7 @@ package merger
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/go-openapi/swag"
 	v2_models "github.com/prometheus/alertmanager/api/v2/models"
@@ -11,7 +12,7 @@ import (
 // recently updated silence (newest UpdatedAt timestamp).
 type V2SilenceID struct{}
 
-func (V2SilenceID) MergeResponses(in [][]byte) ([]byte, error) {
+func (V2SilenceID) MergeResponses(req *http.Request, in [][]byte) ([]byte, error) {
 	silences := make(v2_models.GettableSilences, 0)
 	for _, body := range in {
 		parsed := &v2_models.GettableSilence{}

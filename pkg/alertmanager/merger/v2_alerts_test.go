@@ -1,6 +1,7 @@
 package merger
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -47,7 +48,8 @@ func TestV2Alerts(t *testing.T) {
 		`"updatedAt":"2021-04-21T07:47:32.165Z","labels":{"group":"group_1","name":"alert_2"}}` +
 		`]`)
 
-	out, err := V2Alerts{}.MergeResponses(in)
+	req := &http.Request{}
+	out, err := V2Alerts{}.MergeResponses(req, in)
 	require.NoError(t, err)
 	require.Equal(t, expected, out)
 }

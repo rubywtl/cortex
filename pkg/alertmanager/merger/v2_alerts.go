@@ -2,6 +2,7 @@ package merger
 
 import (
 	"errors"
+	"net/http"
 	"sort"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // instance of that alert with the most recent UpdatedAt timestamp is returned in the response.
 type V2Alerts struct{}
 
-func (V2Alerts) MergeResponses(in [][]byte) ([]byte, error) {
+func (V2Alerts) MergeResponses(req *http.Request, in [][]byte) ([]byte, error) {
 	alerts := make(v2_models.GettableAlerts, 0)
 	for _, body := range in {
 		parsed := make(v2_models.GettableAlerts, 0)

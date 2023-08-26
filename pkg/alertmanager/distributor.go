@@ -84,6 +84,9 @@ func (d *Distributor) isQuorumReadPath(p string) (bool, merger.Merger) {
 	if strings.HasSuffix(p, "/v2/alerts/groups") {
 		return true, merger.V2AlertGroups{}
 	}
+	if strings.HasSuffix(p, "/v2/alertgroups") {
+		return true, merger.V2AlertGroupInfoList{}
+	}
 	if strings.HasSuffix(p, "/v2/silences") {
 		return true, merger.V2Silences{}
 	}
@@ -198,7 +201,7 @@ func (d *Distributor) doQuorum(userID string, w http.ResponseWriter, r *http.Req
 	responsesMtx.Unlock()
 
 	if len(resps) > 0 {
-		respondFromMultipleHTTPGRPCResponses(w, logger, resps, m)
+		respondFromMultipleHTTPGRPCResponses(r, w, logger, resps, m)
 	} else {
 		// This should not happen.
 		level.Error(logger).Log("msg", "distributor did not receive any response from alertmanagers, but there were no errors")
@@ -317,13 +320,13 @@ func httpToHttpgrpcHeaders(hs http.Header) []*httpgrpc.Header {
 	return result
 }
 
-func respondFromMultipleHTTPGRPCResponses(w http.ResponseWriter, logger log.Logger, responses []*httpgrpc.HTTPResponse, merger merger.Merger) {
+func respondFromMultipleHTTPGRPCResponses(req *http.Request, w http.ResponseWriter, logger log.Logger, responses []*httpgrpc.HTTPResponse, merger merger.Merger) {
 	bodies := make([][]byte, len(responses))
 	for i, r := range responses {
 		bodies[i] = r.Body
 	}
 
-	body, err := merger.MergeResponses(bodies)
+	body, err := merger.MergeResponses(req, bodies)
 	if err != nil {
 		level.Error(logger).Log("msg", "failed to merge responses for request", "err", err)
 		w.WriteHeader(http.StatusInternalServerError)

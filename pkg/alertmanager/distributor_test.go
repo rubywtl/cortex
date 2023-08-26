@@ -115,6 +115,16 @@ func TestDistributor_DistributeRequest(t *testing.T) {
 			headersNotPreserved: true,
 			route:               "/v1/alerts/groups",
 		}, {
+			name:               "Read /v2/alertgroups is sent to 3 AMs",
+			numAM:              5,
+			numHappyAM:         5,
+			replicationFactor:  3,
+			isRead:             true,
+			expStatusCode:      http.StatusOK,
+			expectedTotalCalls: 3,
+			route:              "/v2/alertgroups",
+			responseBody:       []byte(`{"NextToken":"","AlertGroupInfoList":[]}`),
+		}, {
 			name:                "Write /alerts/groups not supported",
 			numAM:               5,
 			numHappyAM:          5,

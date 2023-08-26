@@ -2,6 +2,7 @@ package merger
 
 import (
 	"errors"
+	"net/http"
 	"sort"
 
 	"github.com/go-openapi/swag"
@@ -16,7 +17,7 @@ import (
 // timestamp is returned in that group within the response.
 type V2AlertGroups struct{}
 
-func (V2AlertGroups) MergeResponses(in [][]byte) ([]byte, error) {
+func (V2AlertGroups) MergeResponses(req *http.Request, in [][]byte) ([]byte, error) {
 	groups := make(v2_models.AlertGroups, 0)
 	for _, body := range in {
 		parsed := make(v2_models.AlertGroups, 0)

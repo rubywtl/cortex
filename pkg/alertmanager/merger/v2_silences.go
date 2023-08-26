@@ -2,6 +2,7 @@ package merger
 
 import (
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/go-openapi/swag"
@@ -14,7 +15,7 @@ import (
 // most recently updated silence is returned (newest UpdatedAt timestamp).
 type V2Silences struct{}
 
-func (V2Silences) MergeResponses(in [][]byte) ([]byte, error) {
+func (V2Silences) MergeResponses(req *http.Request, in [][]byte) ([]byte, error) {
 	silences := make(v2_models.GettableSilences, 0)
 	for _, body := range in {
 		parsed := make(v2_models.GettableSilences, 0)

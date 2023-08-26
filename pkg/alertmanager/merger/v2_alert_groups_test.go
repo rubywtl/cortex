@@ -1,6 +1,7 @@
 package merger
 
 import (
+	"net/http"
 	"testing"
 
 	v2_models "github.com/prometheus/alertmanager/api/v2/models"
@@ -52,7 +53,8 @@ func TestV2AlertGroups(t *testing.T) {
 		`"updatedAt":"2021-04-21T07:47:32.167Z","labels":{"group":"group_2","name":"alert_3"}}],` +
 		`"labels":{"group":"group_2"},"receiver":{"name":"dummy"}}]`)
 
-	out, err := V2AlertGroups{}.MergeResponses(in)
+	req := &http.Request{}
+	out, err := V2AlertGroups{}.MergeResponses(req, in)
 	require.NoError(t, err)
 	require.Equal(t, expected, out)
 }

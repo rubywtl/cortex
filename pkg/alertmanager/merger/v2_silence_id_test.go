@@ -1,6 +1,7 @@
 package merger
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,8 @@ func TestV2SilenceId_ReturnsNewestSilence(t *testing.T) {
 		`[{"isEqual":true,"isRegex":false,"name":"instance","value":"prometheus-one"}],` +
 		`"startsAt":"2021-04-28T17:31:01.725Z"}`)
 
-	out, err := V2SilenceID{}.MergeResponses(in)
+	req := &http.Request{}
+	out, err := V2SilenceID{}.MergeResponses(req, in)
 	require.NoError(t, err)
 	require.Equal(t, string(expected), string(out))
 }
@@ -56,6 +58,7 @@ func TestV2SilenceID_InvalidDifferentIDs(t *testing.T) {
 			`"startsAt":"2021-04-28T17:31:01.735Z"}`),
 	}
 
-	_, err := V2SilenceID{}.MergeResponses(in)
+	req := &http.Request{}
+	_, err := V2SilenceID{}.MergeResponses(req, in)
 	require.Error(t, err)
 }

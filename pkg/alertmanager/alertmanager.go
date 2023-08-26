@@ -302,6 +302,9 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 			return am.dispatcher.Groups(f1, f2)
 		},
 		Concurrency: am.cfg.APIConcurrency,
+		GroupInfoFunc: func(f1 func(*dispatch.Route) bool) dispatch.AlertGroupInfos {
+			return am.dispatcher.GroupInfos(f1)
+		},
 		APICallback: apiCallback,
 	})
 	if err != nil {

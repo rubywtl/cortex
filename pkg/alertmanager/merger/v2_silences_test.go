@@ -1,6 +1,7 @@
 package merger
 
 import (
+	"net/http"
 	"testing"
 
 	v2_models "github.com/prometheus/alertmanager/api/v2/models"
@@ -53,7 +54,8 @@ func TestV2Silences(t *testing.T) {
 		`"startsAt":"2021-04-28T17:31:01.731Z"}` +
 		`]`)
 
-	out, err := V2Silences{}.MergeResponses(in)
+	req := &http.Request{}
+	out, err := V2Silences{}.MergeResponses(req, in)
 	require.NoError(t, err)
 	require.Equal(t, string(expected), string(out))
 }
