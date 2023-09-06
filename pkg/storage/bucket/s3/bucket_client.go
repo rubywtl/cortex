@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/minio/minio-go/v7"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/thanos-io/objstore"
@@ -139,7 +141,7 @@ func (b *BucketWithRetries) retry(ctx context.Context, f func() error, operation
 		if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
 			return lastErr
 		}
-		if b.bucket.IsObjNotFoundErr(lastErr) || b.bucket.IsAccessDeniedErr(lastErr) {
+		if b.IsObjNotFoundErr(lastErr) || b.IsAccessDeniedErr(lastErr) {
 			return lastErr
 		}
 		retries.Wait()
@@ -233,6 +235,11 @@ func (b *BucketWithRetries) IsObjNotFoundErr(err error) bool {
 }
 
 func (b *BucketWithRetries) IsAccessDeniedErr(err error) bool {
+
+	if strings.HasPrefix(minio.ToErrorResponse(errors.Cause(err)).Code, "KMS") {
+		return true
+	}
+
 	return b.bucket.IsAccessDeniedErr(err)
 }
 
