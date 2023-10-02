@@ -298,8 +298,8 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 		Peer:     &NilPeer{},
 		Registry: am.registry,
 		Logger:   util_log.GoKitLogToSlog(log.With(am.logger, "component", "api")),
-		GroupFunc: func(f1 func(*dispatch.Route) bool, f2 func(*types.Alert, time.Time) bool) (dispatch.AlertGroups, map[model.Fingerprint][]string) {
-			return am.dispatcher.Groups(f1, f2)
+		GroupFunc: func(f1 func(*dispatch.Route) bool, f2 func(*types.Alert, time.Time) bool, f3 func(string) bool) (dispatch.AlertGroups, map[model.Fingerprint][]string) {
+			return am.dispatcher.Groups(f1, f2, f3)
 		},
 		Concurrency: am.cfg.APIConcurrency,
 		GroupInfoFunc: func(f1 func(*dispatch.Route) bool) dispatch.AlertGroupInfos {

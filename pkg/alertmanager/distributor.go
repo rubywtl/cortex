@@ -81,6 +81,9 @@ func (d *Distributor) isQuorumReadPath(p string) (bool, merger.Merger) {
 	if strings.HasSuffix(p, "/v2/alerts") {
 		return true, merger.V2Alerts{}
 	}
+	if strings.HasSuffix(p, "/v2/alertinfos") {
+		return true, merger.V2AlertInfoList{}
+	}
 	if strings.HasSuffix(p, "/v2/alerts/groups") {
 		return true, merger.V2AlertGroups{}
 	}
