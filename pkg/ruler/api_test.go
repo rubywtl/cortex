@@ -8,9 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 
 	"github.com/go-kit/log"
 	"github.com/gorilla/mux"
@@ -248,7 +251,43 @@ func stripEvaluationFields(t *testing.T, r util_api.Response) {
 }
 
 func TestRuler_rules(t *testing.T) {
-	store := newMockRuleStore(mockRules, nil)
+	rules := map[string]rulespb.RuleGroupList{
+		"user1": {
+			&rulespb.RuleGroupDesc{
+				Name:      "group1",
+				Namespace: "namespace1",
+				User:      "user1",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Record: "UP_RULE",
+						Expr:   "up",
+					},
+					{
+						Alert: "UP_ALERT",
+						Expr:  "up < 1",
+					},
+				},
+				Interval: interval,
+			},
+			&rulespb.RuleGroupDesc{
+				Name:      "group2",
+				Namespace: "namespace2",
+				User:      "user1",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Record: "UP_RULE",
+						Expr:   "up",
+					},
+					{
+						Alert: "UP_ALERT",
+						Expr:  "up < 1",
+					},
+				},
+				Interval: interval,
+			},
+		},
+	}
+	store := newMockRuleStore(rules, nil)
 	cfg := defaultRulerConfig(t)
 
 	r := newTestRuler(t, cfg, store, nil)
@@ -256,54 +295,128 @@ func TestRuler_rules(t *testing.T) {
 
 	a := NewAPI(r, r.store, log.NewNopLogger())
 
-	req := requestFor(t, "GET", "https://localhost:8080/api/prom/api/v1/rules", nil, "user1")
-	w := httptest.NewRecorder()
-	a.PrometheusRules(w, req)
-
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	// Check status code and status response
-	responseJSON := util_api.Response{}
-	err := json.Unmarshal(body, &responseJSON)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, responseJSON.Status, "success")
-	stripEvaluationFields(t, responseJSON)
-	actual, err := json.Marshal(responseJSON)
-	require.NoError(t, err)
-
-	// Testing the running rules for user1 in the mock store
-	expectedResponse, _ := json.Marshal(util_api.Response{
-		Status: "success",
-		Data: &RuleDiscovery{
-			RuleGroups: []*RuleGroup{
-				{
-					Name: "group1",
-					File: "namespace1",
-					Rules: []rule{
-						&recordingRule{
-							Name:   "UP_RULE",
-							Query:  "up",
-							Health: "unknown",
-							Type:   "recording",
+	tc := []struct {
+		name        string
+		input       string
+		output      *RuleDiscovery
+		err         string
+		errorType   string
+		statusCode  int
+		status      string
+		matchFilter []string
+		quorum      string
+	}{
+		{
+			name:       "with no limit",
+			statusCode: 200,
+			status:     "success",
+			output: &RuleDiscovery{
+				RuleGroups: []*RuleGroup{
+					{
+						Name: "group1",
+						File: "namespace1",
+						Rules: []rule{
+							&recordingRule{
+								Name:   "UP_RULE",
+								Query:  "up",
+								Health: "unknown",
+								Type:   "recording",
+							},
+							&alertingRule{
+								Name:   "UP_ALERT",
+								Query:  "up < 1",
+								State:  "inactive",
+								Health: "unknown",
+								Type:   "alerting",
+								Alerts: []*Alert{},
+							},
 						},
-						&alertingRule{
-							Name:   "UP_ALERT",
-							Query:  "up < 1",
-							State:  "inactive",
-							Health: "unknown",
-							Type:   "alerting",
-							Alerts: []*Alert{},
-						},
+						Interval: 10,
 					},
-					Interval: 10,
+					{
+						Name: "group2",
+						File: "namespace2",
+						Rules: []rule{
+							&recordingRule{
+								Name:   "UP_RULE",
+								Query:  "up",
+								Health: "unknown",
+								Type:   "recording",
+							},
+							&alertingRule{
+								Name:   "UP_ALERT",
+								Query:  "up < 1",
+								State:  "inactive",
+								Health: "unknown",
+								Type:   "alerting",
+								Alerts: []*Alert{},
+							},
+						},
+						Interval: 10,
+					},
 				},
 			},
+			err:       "",
+			errorType: "",
 		},
-	})
+		{
+			name:        "bad matchers",
+			statusCode:  400,
+			matchFilter: []string{"bad_matcher~="},
+			status:      "error",
+			output:      nil,
+			err:         "error parsing match params 1:12: parse error: unexpected character: '~'",
+			errorType:   "bad_data",
+		},
+		{
+			name:       "bad quorum",
+			statusCode: 400,
+			status:     "error",
+			output:     nil,
+			err:        "unsupported quorum value \"invalid\"",
+			errorType:  "bad_data",
+			quorum:     "invalid",
+		},
+	}
 
-	require.JSONEq(t, string(expectedResponse), string(actual))
+	for _, tt := range tc {
+		t.Run(tt.name, func(t *testing.T) {
+			req := requestFor(t, "GET", "https://localhost:8080/api/prom/api/v1/ruleinfos", nil, "user1")
+			urlValues := req.URL.Query()
+			if tt.matchFilter != nil {
+				addQueryParams(urlValues, "match[]", tt.matchFilter...)
+			}
+			if tt.quorum != "" {
+				addQueryParams(urlValues, "quorum", tt.quorum)
+			}
+			req.URL.RawQuery = urlValues.Encode()
+			w := httptest.NewRecorder()
+			a.PrometheusRules(w, req)
+
+			resp := w.Result()
+			body, _ := io.ReadAll(resp.Body)
+
+			// Check status code and status response
+			responseJSON := util_api.Response{}
+			err := json.Unmarshal(body, &responseJSON)
+			require.NoError(t, err)
+			require.Equal(t, tt.statusCode, resp.StatusCode)
+			require.Equal(t, tt.status, responseJSON.Status)
+
+			// Testing the running rules for user1 in the mock store
+			res := util_api.Response{
+				Status:    tt.status,
+				ErrorType: v1.ErrorType(tt.errorType),
+				Error:     tt.err,
+			}
+			if tt.output != nil {
+				res.Data = tt.output
+			}
+			expectedResponse, _ := json.Marshal(res)
+
+			require.Equal(t, string(expectedResponse), string(body))
+		})
+	}
 }
 
 func TestRuler_rules_special_characters(t *testing.T) {
@@ -781,4 +894,12 @@ func requestFor(t *testing.T, method string, url string, body io.Reader, userID 
 	ctx := user.InjectOrgID(req.Context(), userID)
 
 	return req.WithContext(ctx)
+}
+
+func addQueryParams(urlValues url.Values, paramName string, params ...string) {
+	for _, paramValue := range params {
+		if paramValue != "" {
+			urlValues.Add(paramName, paramValue)
+		}
+	}
 }

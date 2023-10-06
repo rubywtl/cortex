@@ -1125,6 +1125,7 @@ func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeB
 			if !matchesMatcherSets(matcherSets, r.Labels()) {
 				continue
 			}
+
 			lastError := ""
 			if r.LastError() != nil {
 				lastError = r.LastError().Error()
@@ -1299,6 +1300,10 @@ func (r *Ruler) ruleGroupListToGroupStateDesc(userID string, backupGroups rulesp
 				}
 			}
 			if !matchesMatcherSets(filters.matcherSets, cortexpb.FromLabelAdaptersToLabels(r.Labels)) {
+				continue
+			}
+
+			if !matches(filters.matcherSets, cortexpb.FromLabelAdaptersToLabels(r.Labels)) {
 				continue
 			}
 

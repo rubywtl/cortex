@@ -43,6 +43,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cortexproject/cortex/pkg/cortexpb"
+	github_com_cortexproject_cortex_pkg_cortexpb "github.com/cortexproject/cortex/pkg/cortexpb"
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 	"github.com/cortexproject/cortex/pkg/querier"
 	"github.com/cortexproject/cortex/pkg/ring"
@@ -1055,6 +1056,51 @@ func TestGetRules(t *testing.T) {
 			},
 			expectedClientCallCount: 2,
 		},
+		"Shuffle Sharding and ShardSize = 2 with Rule label Filter": {
+			sharding:         true,
+			shuffleShardSize: 2,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulesRequest: RulesRequest{
+				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`},
+			},
+			rulerStateMap: rulerStateMapAllActive,
+			expectedCount: map[string]int{
+				"user1": 1,
+				"user2": 0,
+				"user3": 0,
+			},
+			expectedClientCallCount: 2,
+		},
+		"Shuffle Sharding and ShardSize = 2 with Rule label Filter match 2 rules": {
+			sharding:         true,
+			shuffleShardSize: 2,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulesRequest: RulesRequest{
+				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
+			},
+			rulerStateMap: rulerStateMapAllActive,
+			expectedCount: map[string]int{
+				"user1": 1,
+				"user2": 2,
+				"user3": 0,
+			},
+			expectedClientCallCount: 2,
+		},
+		"Shuffle Sharding and ShardSize = 2 with Rule label Filter match templating label": {
+			sharding:         true,
+			shuffleShardSize: 2,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulesRequest: RulesRequest{
+				Matches: []string{`{templatedlabel="{{ $externalURL }}"}`},
+			},
+			rulerStateMap: rulerStateMapAllActive,
+			expectedCount: map[string]int{
+				"user1": 0,
+				"user2": 0,
+				"user3": 1,
+			},
+			expectedClientCallCount: 2,
+		},
 		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter and one ruler is in LEAVING state": {
 			sharding:         true,
 			shuffleShardSize: 2,
@@ -1162,6 +1208,22 @@ func TestGetRules(t *testing.T) {
 				"user1": 3,
 				"user2": 5,
 				"user3": 1,
+			},
+			expectedClientCallCount: 3,
+		},
+		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled with labels filter": {
+			sharding:             true,
+			shuffleShardSize:     3,
+			shardingStrategy:     util.ShardingStrategyShuffle,
+			rulerStateMap:        rulerStateMapAllActive,
+			enableAPIRulesBackup: true,
+			rulesRequest: RulesRequest{
+				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
+			},
+			expectedCount: map[string]int{
+				"user1": 1,
+				"user2": 2,
+				"user3": 0,
 			},
 			expectedClientCallCount: 3,
 		},

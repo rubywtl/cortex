@@ -65,7 +65,8 @@ func Test_cmkHooks(t *testing.T) {
 				KVStore: kv.Config{
 					Mock: kvStore,
 				},
-				HeartbeatTimeout: 1 * time.Minute,
+				HeartbeatTimeout:  1 * time.Minute,
+				ReplicationFactor: 1,
 			},
 			FlushCheckPeriod: 0,
 		}
@@ -114,7 +115,7 @@ func Test_cmkHooks(t *testing.T) {
 			len(r1.manager.GetRules(user3)) > 0
 	})
 
-	returned, err := r1.listRules(context.Background())
+	returned, _, err := r1.listRules(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, returned, allRules)
 
@@ -123,7 +124,7 @@ func Test_cmkHooks(t *testing.T) {
 
 	// Closing user1
 	require.NoError(t, closeFunctionsByUser[user1](nil))
-	returned, err = r1.listRules(context.Background())
+	returned, _, err = r1.listRules(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, returned, map[string]rulespb.RuleGroupList{
 		user2: {user2Group1},
@@ -132,7 +133,7 @@ func Test_cmkHooks(t *testing.T) {
 
 	// Reopening User1
 	openFunctionsByUser[user1]()
-	returned, err = r1.listRules(context.Background())
+	returned, _, err = r1.listRules(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, returned, allRules)
 }
