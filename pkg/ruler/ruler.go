@@ -1052,6 +1052,89 @@ func (r *Ruler) GetRules(ctx context.Context, rulesRequest RulesRequest) (*Rules
 	return &response, err
 }
 
+// GetRuleInfos retrieves the running rules from this ruler and all running rulers in the ring if
+// sharding is enabled
+func (r *Ruler) GetRuleInfos(ctx context.Context, ruleInfosRequest RuleInfosRequest) ([]*RuleInfosResponse, error) {
+	userID, err := tenant.TenantID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("no user id found in context")
+	}
+
+	if r.cfg.EnableSharding {
+		return r.getShardedRuleInfos(ctx, userID, ruleInfosRequest)
+	}
+
+	response, err := r.getLocalRuleInfos(userID, ruleInfosRequest)
+	return []*RuleInfosResponse{&response}, err
+}
+
+func (r *Ruler) getLocalRuleInfos(userID string, ruleInfosRequest RuleInfosRequest) (RuleInfosResponse, error) {
+
+	groupDescs, err := r.getLocalRules(userID, RulesRequest{
+		RuleNames:      ruleInfosRequest.GetRuleNames(),
+		RuleGroupNames: ruleInfosRequest.GetRuleGroupNames(),
+		Files:          ruleInfosRequest.GetFiles(),
+		Type:           ruleInfosRequest.GetType(),
+		Matches:        ruleInfosRequest.GetMatches(),
+	}, false)
+
+	if err != nil {
+		return RuleInfosResponse{
+			Groups:    nil,
+			NextToken: "",
+		}, err
+	}
+
+	sort.Sort(GroupStateDescs(groupDescs))
+
+	returnGroupDescs := make([]*GroupInfoStateDesc, 0, len(groupDescs))
+	for _, group := range groupDescs {
+
+		// Skip the rule group if the next token is set and hasn't arrived the nextToken item yet.
+		groupID := getRuleGroupNextToken(group.Group.Namespace, group.Group.Name)
+		if len(ruleInfosRequest.NextToken) > 0 && ruleInfosRequest.NextToken >= groupID {
+			continue
+		}
+
+		groupDesc := &GroupInfoStateDesc{
+			Group:               group.Group,
+			EvaluationTimestamp: group.EvaluationTimestamp,
+			EvaluationDuration:  group.EvaluationDuration,
+		}
+		for _, rule := range group.ActiveRules {
+			alertsDesc := rule.Alerts
+			hasMore := false
+			if ruleInfosRequest.MaxAlerts >= 0 && len(rule.Alerts) > int(ruleInfosRequest.MaxAlerts) {
+				alertsDesc = alertsDesc[:int(ruleInfosRequest.MaxAlerts)]
+				hasMore = true
+			}
+			ruleDesc := &RuleInfoStateDesc{
+				Rule:      rule.Rule,
+				State:     rule.State,
+				Health:    rule.Health,
+				LastError: rule.LastError,
+				AlertInfo: &AlertInfosStateDesc{
+					Alerts:  alertsDesc,
+					HasMore: hasMore,
+				},
+				EvaluationTimestamp: rule.EvaluationTimestamp,
+				EvaluationDuration:  rule.EvaluationDuration,
+			}
+			groupDesc.ActiveRules = append(groupDesc.ActiveRules, ruleDesc)
+		}
+		if len(groupDesc.ActiveRules) > 0 {
+			returnGroupDescs = append(returnGroupDescs, groupDesc)
+		}
+	}
+
+	returnGroupDescs, nextToken := TruncateGroupInfos(returnGroupDescs, int(ruleInfosRequest.MaxRuleGroups))
+
+	return RuleInfosResponse{
+		Groups:    returnGroupDescs,
+		NextToken: nextToken,
+	}, nil
+}
+
 func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeBackups bool) (RulesResponse, error) {
 	groups := r.manager.GetRules(userID)
 
@@ -1245,6 +1328,173 @@ func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeB
 	}, nil
 }
 
+func (r *Ruler) getLocalRulesCopy(userID string, rulesRequest RulesRequest, includeBackups bool) ([]*GroupStateDesc, error) {
+	groups := r.manager.GetRules(userID)
+
+	groupDescs := make([]*GroupStateDesc, 0, len(groups))
+	prefix := filepath.Join(r.cfg.RulePath, userID) + "/"
+
+	sliceToSet := func(values []string) map[string]struct{} {
+		set := make(map[string]struct{}, len(values))
+		for _, v := range values {
+			set[v] = struct{}{}
+		}
+		return set
+	}
+
+	ruleNameSet := sliceToSet(rulesRequest.RuleNames)
+	ruleGroupNameSet := sliceToSet(rulesRequest.RuleGroupNames)
+	fileSet := sliceToSet(rulesRequest.Files)
+	ruleType := rulesRequest.Type
+	alertState := rulesRequest.State
+	health := rulesRequest.Health
+	matcherSets, err := parseMatchersParam(rulesRequest.Matchers)
+	if err != nil {
+		return nil, errors.Wrap(err, "error parsing matcher values")
+	}
+
+	returnAlerts := ruleType == "" || ruleType == alertingRuleFilter
+	returnRecording := (ruleType == "" || ruleType == recordingRuleFilter) && alertState == ""
+
+	for _, group := range groups {
+		// The mapped filename is url path escaped encoded to make handling `/` characters easier
+		decodedNamespace, err := url.PathUnescape(strings.TrimPrefix(group.File(), prefix))
+		if err != nil {
+			return nil, errors.Wrap(err, "unable to decode rule filename")
+		}
+		if len(fileSet) > 0 {
+			if _, OK := fileSet[decodedNamespace]; !OK {
+				continue
+			}
+		}
+
+		if len(ruleGroupNameSet) > 0 {
+			if _, OK := ruleGroupNameSet[group.Name()]; !OK {
+				continue
+			}
+		}
+		interval := group.Interval()
+
+		queryOffset := group.QueryOffset()
+		groupDesc := &GroupStateDesc{
+			Group: &rulespb.RuleGroupDesc{
+				Name:        group.Name(),
+				Namespace:   string(decodedNamespace),
+				Interval:    interval,
+				User:        userID,
+				Limit:       int64(group.Limit()),
+				QueryOffset: &queryOffset,
+			},
+
+			EvaluationTimestamp: group.GetLastEvaluation(),
+			EvaluationDuration:  group.GetEvaluationTime(),
+		}
+		for i, r := range group.Rules() {
+			if len(ruleNameSet) > 0 {
+				if _, OK := ruleNameSet[r.Name()]; !OK {
+					continue
+				}
+			}
+			if !returnByHealth(health, string(r.Health())) {
+				continue
+			}
+			if !matchesMatcherSets(matcherSets, r.Labels()) {
+				continue
+			}
+
+			lastError := ""
+			if r.LastError() != nil {
+				lastError = r.LastError().Error()
+			}
+
+			var ruleDesc *RuleStateDesc
+			switch rule := r.(type) {
+			case *promRules.AlertingRule:
+				if !returnAlerts {
+					continue
+				}
+				if !returnByState(alertState, rule.State().String()) {
+					continue
+				}
+				alerts := []*AlertStateDesc{}
+				if !rulesRequest.ExcludeAlerts {
+					for _, a := range rule.ActiveAlerts() {
+						alerts = append(alerts, &AlertStateDesc{
+							State:           a.State.String(),
+							Labels:          cortexpb.FromLabelsToLabelAdapters(a.Labels),
+							Annotations:     cortexpb.FromLabelsToLabelAdapters(a.Annotations),
+							Value:           a.Value,
+							ActiveAt:        a.ActiveAt,
+							FiredAt:         a.FiredAt,
+							ResolvedAt:      a.ResolvedAt,
+							LastSentAt:      a.LastSentAt,
+							ValidUntil:      a.ValidUntil,
+							KeepFiringSince: a.KeepFiringSince,
+						})
+					}
+				}
+				ruleDesc = &RuleStateDesc{
+					Rule: &rulespb.RuleDesc{
+						Expr:          rule.Query().String(),
+						Alert:         rule.Name(),
+						For:           rule.HoldDuration(),
+						KeepFiringFor: rule.KeepFiringFor(),
+						Labels:        cortexpb.FromLabelsToLabelAdapters(rule.Labels()),
+						Annotations:   cortexpb.FromLabelsToLabelAdapters(rule.Annotations()),
+						Order:         int64(i),
+					},
+					State:               rule.State().String(),
+					Health:              string(rule.Health()),
+					LastError:           lastError,
+					Alerts:              alerts,
+					EvaluationTimestamp: rule.GetEvaluationTimestamp(),
+					EvaluationDuration:  rule.GetEvaluationDuration(),
+				}
+			case *promRules.RecordingRule:
+				if !returnRecording {
+					continue
+				}
+				ruleDesc = &RuleStateDesc{
+					Rule: &rulespb.RuleDesc{
+						Record: rule.Name(),
+						Expr:   rule.Query().String(),
+						Labels: cortexpb.FromLabelsToLabelAdapters(rule.Labels()),
+					},
+					Health:              string(rule.Health()),
+					LastError:           lastError,
+					EvaluationTimestamp: rule.GetEvaluationTimestamp(),
+					EvaluationDuration:  rule.GetEvaluationDuration(),
+				}
+			default:
+				return nil, errors.Errorf("failed to assert type of rule '%v'", rule.Name())
+			}
+			groupDesc.ActiveRules = append(groupDesc.ActiveRules, ruleDesc)
+		}
+		if len(groupDesc.ActiveRules) > 0 {
+			groupDescs = append(groupDescs, groupDesc)
+		}
+	}
+
+	if !includeBackups {
+		return groupDescs, nil
+	}
+
+	backupGroups := r.manager.GetBackupRules(userID)
+	backupGroupDescs, err := r.ruleGroupListToGroupStateDesc(userID, backupGroups, groupListFilter{
+		ruleNameSet,
+		ruleGroupNameSet,
+		fileSet,
+		returnAlerts,
+		returnRecording,
+		matcherSets,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return append(groupDescs, backupGroupDescs...), nil
+}
+
 type groupListFilter struct {
 	ruleNameSet      map[string]struct{}
 	ruleGroupNameSet map[string]struct{}
@@ -1363,7 +1613,7 @@ func (r *Ruler) getShardSizeForUser(userID string) int {
 	return max(newShardSize, r.cfg.Ring.ReplicationFactor)
 }
 
-func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest RulesRequest) (*RulesResponse, error) {
+func (r *Ruler) getRingJobs(ctx context.Context, userID string) ([]interface{}, map[string]struct{}, map[string]string, ring.ReplicationSet, error) {
 	ring := ring.ReadRing(r.ring)
 
 	if shardSize := r.limits.RulerTenantShardSize(userID); shardSize > 0 && r.cfg.ShardingStrategy == util.ShardingStrategyShuffle {
@@ -1372,19 +1622,8 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 
 	rulers, failedZones, err := GetReplicationSetForListRule(ring, &r.cfg.Ring)
 	if err != nil {
-		return nil, err
+		return nil, failedZones, nil, rulers, err
 	}
-
-	ctx, err = user.InjectIntoGRPCRequest(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("unable to inject user ID into grpc request, %v", err)
-	}
-
-	var (
-		mtx      sync.Mutex
-		merged   []*RulesResponse
-		errCount int
-	)
 
 	zoneByAddress := make(map[string]string)
 	if r.cfg.RulesBackupEnabled() {
@@ -1392,8 +1631,30 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 			zoneByAddress[ruler.Addr] = ruler.Zone
 		}
 	}
-	// Concurrently fetch rules from all rulers.
-	jobs := concurrency.CreateJobsFromStrings(rulers.GetAddresses())
+
+	// Concurrently fetch rules from all rulers. Since rules are not replicated,
+	// we need all requests to succeed.
+	return concurrency.CreateJobsFromStrings(rulers.GetAddresses()), failedZones, zoneByAddress, rulers, nil
+}
+
+func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest RulesRequest) (*RulesResponse, error) {
+
+	var (
+		mtx      sync.Mutex
+		merged   []*RulesResponse
+		errCount int
+	)
+
+	ctx, err := user.InjectIntoGRPCRequest(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to inject user ID into grpc request, %v", err)
+	}
+
+	jobs, failedZones, zoneByAddress, rulers, err := r.getRingJobs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
 	err = concurrency.ForEach(ctx, jobs, len(jobs), func(ctx context.Context, job interface{}) error {
 		addr := job.(string)
 
@@ -1455,6 +1716,51 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 	}, err
 }
 
+func (r *Ruler) getShardedRuleInfos(ctx context.Context, userID string, ruleInfosRequest RuleInfosRequest) ([]*RuleInfosResponse, error) {
+
+	var (
+		mergedMx sync.Mutex
+		merged   []*RuleInfosResponse
+	)
+
+	ctx, err := user.InjectIntoGRPCRequest(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to inject user ID into grpc request, %v", err)
+	}
+
+	jobs, failedZones, _, _, err := r.getRingJobs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(failedZones) > 0 {
+		// for now RulesInfos api don't support HA
+		return nil, ring.ErrTooManyUnhealthyInstances
+	}
+
+	err = concurrency.ForEach(ctx, jobs, len(jobs), func(ctx context.Context, job interface{}) error {
+		addr := job.(string)
+
+		rulerClient, err := r.clientsPool.GetClientFor(addr)
+		if err != nil {
+			return errors.Wrapf(err, "unable to get client for ruler %s", addr)
+		}
+
+		newGrps, err := rulerClient.RuleInfos(ctx, &ruleInfosRequest)
+		if err != nil {
+			return errors.Wrapf(err, "unable to retrieve rules from ruler %s", addr)
+		}
+
+		mergedMx.Lock()
+		merged = append(merged, newGrps)
+		mergedMx.Unlock()
+
+		return nil
+	})
+
+	return merged, err
+}
+
 // Rules implements the rules service
 func (r *Ruler) Rules(ctx context.Context, in *RulesRequest) (*RulesResponse, error) {
 	userID, err := tenant.TenantID(ctx)
@@ -1475,6 +1781,21 @@ func (r *Ruler) Rules(ctx context.Context, in *RulesRequest) (*RulesResponse, er
 func (r *Ruler) HasMaxRuleGroupsLimit(userID string) bool {
 	limit := r.limits.RulerMaxRuleGroupsPerTenant(userID)
 	return limit > 0
+}
+
+// RuleInfos implements the rules service for pagination api
+func (r *Ruler) RuleInfos(ctx context.Context, in *RuleInfosRequest) (*RuleInfosResponse, error) {
+	userID, err := tenant.TenantID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("no user id found in context")
+	}
+
+	groupDescs, err := r.getLocalRuleInfos(userID, *in)
+	if err != nil {
+		return nil, err
+	}
+
+	return &groupDescs, nil
 }
 
 // AssertMaxRuleGroups limit has not been reached compared to the current

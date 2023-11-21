@@ -290,6 +290,10 @@ func (c *mockRulerClient) Rules(ctx context.Context, in *RulesRequest, _ ...grpc
 	return c.ruler.Rules(ctx, in)
 }
 
+func (c *mockRulerClient) RuleInfos(ctx context.Context, in *RuleInfosRequest, _ ...grpc.CallOption) (*RuleInfosResponse, error) {
+	return c.ruler.RuleInfos(ctx, in)
+}
+
 func (c *mockRulerClient) LivenessCheck(ctx context.Context, in *LivenessCheckRequest, opts ...grpc.CallOption) (*LivenessCheckResponse, error) {
 
 	if c.ruler.State() == services.Terminated {
@@ -633,7 +637,154 @@ func TestRuler_Rules(t *testing.T) {
 	compareRuleGroupDescToStateDesc(t, expectedRg, rg)
 }
 
+func TestRuler_RuleInfos(t *testing.T) {
+	mockRules := map[string]rulespb.RuleGroupList{
+		"user1": {
+			&rulespb.RuleGroupDesc{
+				Name:      "group1",
+				Namespace: "namespace1",
+				User:      "user1",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Alert: "UP_ALERT",
+						Expr:  "1", // always fire for this test
+					},
+				},
+				Interval: interval,
+			},
+			&rulespb.RuleGroupDesc{
+				Name:      "group2",
+				Namespace: "namespace2",
+				User:      "user1",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Alert: "UP_ALERT",
+						Expr:  "1", // always fire for this test
+					},
+				},
+				Interval: interval,
+			},
+			&rulespb.RuleGroupDesc{
+				Name:      "group3",
+				Namespace: "namespace3",
+				User:      "user1",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Alert: "UP_ALERT",
+						Expr:  "1", // always fire for this test
+					},
+				},
+				Interval: interval,
+			},
+		},
+	}
+
+	// NEXT, set up ruler config
+	store := newMockRuleStore(mockRules, nil)
+	rulerCfg := defaultRulerConfig(t)
+
+	// create a ruler but don't start it. instead, we'll evaluate the rule groups manually.
+	r := newTestRuler(t, rulerCfg, store, nil)
+	defer services.StopAndAwaitTerminated(context.Background(), r) //nolint:errcheck
+
+	ruleGroup := r.manager.GetRules("user1")
+
+	// NEXT, evaluate the rule group the first time and assert
+	ctx := user.InjectOrgID(context.Background(), "user1")
+	for _, rg := range ruleGroup {
+		rg.Eval(ctx, time.Now().UTC())
+	}
+
+	type testCase struct {
+		orgID                string
+		rulesRequest         *RuleInfosRequest
+		expectedRgLength     int
+		expectedAlertsLength int
+		expectedRg           rulespb.RuleGroupList
+		hasMore              bool
+		expectNextToken      string
+	}
+
+	testCases := map[string]testCase{
+		"No max items, user1": {
+			orgID:                "user1",
+			rulesRequest:         &RuleInfosRequest{MaxAlerts: -1, MaxRuleGroups: -1},
+			expectedRgLength:     3,
+			expectedAlertsLength: 1,
+			expectedRg:           mockRules["user1"],
+			hasMore:              false,
+			expectNextToken:      "",
+		},
+		"Has max alerts, user1": {
+			orgID:                "user1",
+			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: -1},
+			expectedRgLength:     3,
+			expectedAlertsLength: 0,
+			expectedRg:           mockRules["user1"],
+			hasMore:              true,
+			expectNextToken:      "",
+		},
+		"Has max rule groups, user1": {
+			orgID:                "user1",
+			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 1},
+			expectedRgLength:     1,
+			expectedAlertsLength: 0,
+			expectedRg:           mockRules["user1"],
+			hasMore:              true,
+			expectNextToken:      getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name),
+		},
+		"Has max rule groups and start next token, user1": {
+			orgID:                "user1",
+			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 1, NextToken: getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name)},
+			expectedRgLength:     1,
+			expectedAlertsLength: 0,
+			expectedRg:           mockRules["user1"],
+			hasMore:              true,
+			expectNextToken:      getRuleGroupNextToken(mockRules["user1"][2].Namespace, mockRules["user1"][2].Name),
+		},
+		"Has max rule groups = 2 and start next token, user1": {
+			orgID:                "user1",
+			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 2, NextToken: getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name)},
+			expectedRgLength:     2,
+			expectedAlertsLength: 0,
+			expectedRg:           mockRules["user1"],
+			hasMore:              true,
+			expectNextToken:      "",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx := user.InjectOrgID(context.Background(), tc.orgID)
+			rls, err := r.RuleInfos(ctx, tc.rulesRequest)
+			require.NoError(t, err)
+			require.Len(t, rls.Groups, tc.expectedRgLength)
+			for _, rg := range rls.Groups {
+				for j, expectRG := range tc.expectedRg {
+					if (rg.Group.Namespace == tc.expectedRg[j].Namespace) && (rg.Group.Name == tc.expectedRg[j].Name) {
+						compareRuleGroupDescToResponseDesc(t, expectRG, rg)
+					}
+				}
+			}
+			require.Equal(t, tc.expectNextToken, rls.NextToken)
+			require.Equal(t, tc.expectedAlertsLength, len(rls.Groups[0].ActiveRules[0].AlertInfo.Alerts))
+			require.Equal(t, tc.hasMore, rls.Groups[0].ActiveRules[0].AlertInfo.HasMore)
+		})
+	}
+
+}
+
 func compareRuleGroupDescToStateDesc(t *testing.T, expected *rulespb.RuleGroupDesc, got *GroupStateDesc) {
+	require.Equal(t, got.Group.Name, expected.Name)
+	require.Equal(t, got.Group.Namespace, expected.Namespace)
+	require.Len(t, expected.Rules, len(got.ActiveRules))
+	for i := range got.ActiveRules {
+		require.Equal(t, expected.Rules[i].Record, got.ActiveRules[i].Rule.Record)
+		require.Equal(t, expected.Rules[i].Alert, got.ActiveRules[i].Rule.Alert)
+	}
+}
+
+func compareRuleGroupDescToResponseDesc(t *testing.T, expected *rulespb.RuleGroupDesc, got *GroupInfoStateDesc) {
 	require.Equal(t, got.Group.Name, expected.Name)
 	require.Equal(t, got.Group.Namespace, expected.Namespace)
 	require.Len(t, expected.Rules, len(got.ActiveRules))
@@ -653,6 +804,7 @@ func TestGetRules(t *testing.T) {
 		shardingStrategy           string
 		shuffleShardSize           float64
 		rulesRequest               RulesRequest
+		ruleInfosRequest           RuleInfosRequest
 		expectedCount              map[string]int
 		expectedClientCallCount    int
 		rulerStateMap              map[string]ring.InstanceState
@@ -879,6 +1031,10 @@ func TestGetRules(t *testing.T) {
 				Type:          alertingRuleFilter,
 				MaxRuleGroups: -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				Type:          alertingRuleFilter,
+				MaxRuleGroups: -1,
+			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
 				"user1": 2,
@@ -945,6 +1101,10 @@ func TestGetRules(t *testing.T) {
 				Matchers:      []string{`{alertname="atest_user1_group1_rule_1"}`},
 				MaxRuleGroups: -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+				Matches:       []string{`{alertname="atest_user1_group1_rule_1"}`},
+			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
 				"user1": 1,
@@ -958,6 +1118,10 @@ func TestGetRules(t *testing.T) {
 				Matchers:      []string{`{alertname=~"atest_.*"}`},
 				MaxRuleGroups: -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+				Matches:       []string{`{alertname=~"atest_.*"}`},
+			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
 				"user1": 2,
@@ -970,6 +1134,9 @@ func TestGetRules(t *testing.T) {
 			shardingStrategy: util.ShardingStrategyDefault,
 			rulerStateMap:    rulerStateMapAllActive,
 			rulesRequest:     RulesRequest{MaxRuleGroups: -1},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+			},
 			expectedCount: map[string]int{
 				"user1": 5,
 				"user2": 9,
@@ -999,6 +1166,10 @@ func TestGetRules(t *testing.T) {
 				Type:          recordingRuleFilter,
 				MaxRuleGroups: -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				Type:          recordingRuleFilter,
+				MaxRuleGroups: -1,
+			},
 			expectedCount: map[string]int{
 				"user1": 3,
 				"user2": 5,
@@ -1011,6 +1182,10 @@ func TestGetRules(t *testing.T) {
 			shuffleShardSize: 2,
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulesRequest: RulesRequest{
+				RuleGroupNames: []string{"third"},
+				MaxRuleGroups:  -1,
+			},
+			ruleInfosRequest: RuleInfosRequest{
 				RuleGroupNames: []string{"third"},
 				MaxRuleGroups:  -1,
 			},
@@ -1032,6 +1207,11 @@ func TestGetRules(t *testing.T) {
 				Type:           recordingRuleFilter,
 				MaxRuleGroups:  -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				RuleGroupNames: []string{"second", "third"},
+				Type:           recordingRuleFilter,
+				MaxRuleGroups:  -1,
+			},
 			expectedCount: map[string]int{
 				"user1": 2,
 				"user2": 2,
@@ -1045,6 +1225,11 @@ func TestGetRules(t *testing.T) {
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulerStateMap:    rulerStateMapAllActive,
 			rulesRequest: RulesRequest{
+				Type:          alertingRuleFilter,
+				Files:         []string{"latency-test"},
+				MaxRuleGroups: -1,
+			},
+			ruleInfosRequest: RuleInfosRequest{
 				Type:          alertingRuleFilter,
 				Files:         []string{"latency-test"},
 				MaxRuleGroups: -1,
@@ -1063,6 +1248,10 @@ func TestGetRules(t *testing.T) {
 			rulesRequest: RulesRequest{
 				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`},
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+				Matches:       []string{`{alertname="atest_user1_group1_rule_1"}`},
+			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
 				"user1": 1,
@@ -1078,6 +1267,10 @@ func TestGetRules(t *testing.T) {
 			rulesRequest: RulesRequest{
 				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+				Matches:       []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
+			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
 				"user1": 1,
@@ -1092,6 +1285,10 @@ func TestGetRules(t *testing.T) {
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulesRequest: RulesRequest{
 				Matches: []string{`{templatedlabel="{{ $externalURL }}"}`},
+			},
+			ruleInfosRequest: RuleInfosRequest{
+				MaxRuleGroups: -1,
+				Matches:       []string{`{templatedlabel="{{ $externalURL }}"}`},
 			},
 			rulerStateMap: rulerStateMapAllActive,
 			expectedCount: map[string]int{
@@ -1110,6 +1307,10 @@ func TestGetRules(t *testing.T) {
 				Type:          recordingRuleFilter,
 				MaxRuleGroups: -1,
 			},
+			ruleInfosRequest: RuleInfosRequest{
+				Type:          recordingRuleFilter,
+				MaxRuleGroups: -1,
+			},
 			expectedCount: map[string]int{
 				"user1": 3,
 				"user2": 5,
@@ -1123,6 +1324,10 @@ func TestGetRules(t *testing.T) {
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulerStateMap:    rulerStateMapOnePending,
 			rulesRequest: RulesRequest{
+				Type:          recordingRuleFilter,
+				MaxRuleGroups: -1,
+			},
+			ruleInfosRequest: RuleInfosRequest{
 				Type:          recordingRuleFilter,
 				MaxRuleGroups: -1,
 			},
@@ -1435,11 +1640,23 @@ func TestGetRules(t *testing.T) {
 					} else {
 						require.NoError(t, err)
 					}
+
 					rct := 0
 					for _, ruleStateDesc := range ruleStateDescriptions.Groups {
 						rct += len(ruleStateDesc.ActiveRules)
 					}
 					require.Equal(t, tc.expectedCount[u], rct)
+					if tc.ruleInfosRequest.MaxRuleGroups != 0 {
+						ruleInfosDescriptions, err := r.GetRuleInfos(ctx, tc.ruleInfosRequest)
+						require.NoError(t, err)
+						rinfoct := 0
+						for _, ruleInfoResponses := range ruleInfosDescriptions {
+							for _, groupInfosState := range ruleInfoResponses.Groups {
+								rinfoct += len(groupInfosState.ActiveRules)
+							}
+						}
+						require.Equal(t, tc.expectedCount[u], rinfoct)
+					}
 					if tc.sharding {
 						mockPoolClient := r.clientsPool.(*mockRulerClientsPool)
 

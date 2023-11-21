@@ -73,3 +73,7 @@ func (m *mockRulerServer) LivenessCheck(ctx context.Context, request *LivenessCh
 func (m *mockRulerServer) Rules(context.Context, *RulesRequest) (*RulesResponse, error) {
 	return &RulesResponse{}, nil
 }
+
+func (m *mockRulerServer) RuleInfos(ctx context.Context, in *RuleInfosRequest) (*RuleInfosResponse, error) {
+	return &RuleInfosResponse{}, nil
+}

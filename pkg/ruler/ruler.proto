@@ -17,6 +17,7 @@ option (gogoproto.unmarshaler_all) = true;
 
 service Ruler {
   rpc Rules(RulesRequest) returns (RulesResponse) {};
+  rpc RuleInfos(RuleInfosRequest) returns (RuleInfosResponse) {};
   rpc LivenessCheck(LivenessCheckRequest) returns (LivenessCheckResponse){};
 }
 
@@ -86,4 +87,45 @@ message AlertStateDesc {
       [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp keep_firing_since = 10
       [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+}
+
+message RuleInfosRequest {
+  repeated string ruleNames = 1;
+  repeated string ruleGroupNames = 2;
+  repeated string files = 3;
+  string type = 4;
+  int32 maxAlerts = 5;
+  int32 maxRuleGroups = 6;
+  string nextToken = 7;
+  repeated string matches = 8;
+}
+
+// GroupInfosStateDesc is a proto representation of a cortex rule group
+message RuleInfosResponse {
+  repeated GroupInfoStateDesc groups = 1;
+  string nextToken = 2;
+}
+
+// GroupInfoStateDesc is a proto representation of a cortex rule group
+message GroupInfoStateDesc {
+  rules.RuleGroupDesc group = 1;
+  repeated RuleInfoStateDesc active_rules = 2;
+  google.protobuf.Timestamp evaluationTimestamp = 3 [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Duration evaluationDuration = 4 [(gogoproto.nullable) = false,(gogoproto.stdduration) = true];
+}
+
+// RuleInfoStateDesc is a proto representation of a Prometheus Rule
+message RuleInfoStateDesc {
+  rules.RuleDesc rule = 1;
+  string state = 2;
+  string health = 3;
+  string lastError = 4;
+  AlertInfosStateDesc alertInfo = 5;
+  google.protobuf.Timestamp evaluationTimestamp = 6  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Duration evaluationDuration = 7 [(gogoproto.nullable) = false,(gogoproto.stdduration) = true];
+}
+
+message AlertInfosStateDesc {
+  repeated AlertStateDesc alerts = 1;
+  bool hasMore = 2;
 }
