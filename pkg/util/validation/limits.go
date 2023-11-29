@@ -236,16 +236,18 @@ type Limits struct {
 	NotificationRateLimit               float64                  `yaml:"alertmanager_notification_rate_limit" json:"alertmanager_notification_rate_limit"`
 	NotificationRateLimitPerIntegration NotificationRateLimitMap `yaml:"alertmanager_notification_rate_limit_per_integration" json:"alertmanager_notification_rate_limit_per_integration"`
 
-	AlertmanagerMaxConfigSizeBytes             int                `yaml:"alertmanager_max_config_size_bytes" json:"alertmanager_max_config_size_bytes"`
-	AlertmanagerMaxTemplatesCount              int                `yaml:"alertmanager_max_templates_count" json:"alertmanager_max_templates_count"`
-	AlertmanagerMaxTemplateSizeBytes           int                `yaml:"alertmanager_max_template_size_bytes" json:"alertmanager_max_template_size_bytes"`
-	AlertmanagerMaxDispatcherAggregationGroups int                `yaml:"alertmanager_max_dispatcher_aggregation_groups" json:"alertmanager_max_dispatcher_aggregation_groups"`
-	AlertmanagerMaxAlertsCount                 int                `yaml:"alertmanager_max_alerts_count" json:"alertmanager_max_alerts_count"`
-	AlertmanagerMaxAlertsSizeBytes             int                `yaml:"alertmanager_max_alerts_size_bytes" json:"alertmanager_max_alerts_size_bytes"`
-	AlertmanagerMaxSilencesCount               int                `yaml:"alertmanager_max_silences_count" json:"alertmanager_max_silences_count"`
-	AlertmanagerMaxSilencesSizeBytes           int                `yaml:"alertmanager_max_silences_size_bytes" json:"alertmanager_max_silences_size_bytes"`
-	DisabledRuleGroups                         DisabledRuleGroups `yaml:"disabled_rule_groups" json:"disabled_rule_groups" doc:"nocli|description=list of rule groups to disable"`
-	AlertmanagerReadAPIMaxAlertsCount          int                `yaml:"alertmanager_read_api_max_alerts_counts" json:"alertmanager_read_api_max_alerts_counts"`
+	AlertmanagerMaxConfigSizeBytes             int `yaml:"alertmanager_max_config_size_bytes" json:"alertmanager_max_config_size_bytes"`
+	AlertmanagerMaxTemplatesCount              int `yaml:"alertmanager_max_templates_count" json:"alertmanager_max_templates_count"`
+	AlertmanagerMaxTemplateSizeBytes           int `yaml:"alertmanager_max_template_size_bytes" json:"alertmanager_max_template_size_bytes"`
+	AlertmanagerMaxDispatcherAggregationGroups int `yaml:"alertmanager_max_dispatcher_aggregation_groups" json:"alertmanager_max_dispatcher_aggregation_groups"`
+	AlertmanagerMaxAlertsCount                 int `yaml:"alertmanager_max_alerts_count" json:"alertmanager_max_alerts_count"`
+	AlertmanagerMaxAlertsSizeBytes             int `yaml:"alertmanager_max_alerts_size_bytes" json:"alertmanager_max_alerts_size_bytes"`
+	AlertmanagerMaxSilencesCount               int `yaml:"alertmanager_max_silences_count" json:"alertmanager_max_silences_count"`
+	AlertmanagerMaxSilencesSizeBytes           int `yaml:"alertmanager_max_silences_size_bytes" json:"alertmanager_max_silences_size_bytes"`
+	AlertmanagerReadAPIMaxAlertsCount          int `yaml:"alertmanager_read_api_max_alerts_counts" json:"alertmanager_read_api_max_alerts_counts"`
+	AlertmanagerAlertLifeCycleObserverLevel    int `yaml:"alertmanager_alert_lifecycle_observer_level" json:"alertmanager_alert_lifecycle_observer_level"`
+
+	DisabledRuleGroups DisabledRuleGroups `yaml:"disabled_rule_groups" json:"disabled_rule_groups" doc:"nocli|description=list of rule groups to disable"`
 }
 
 // RegisterFlags adds the flags required to config this to the given FlagSet
@@ -355,6 +357,7 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 	f.IntVar(&l.AlertmanagerMaxSilencesCount, "alertmanager.max-silences-count", 0, "Maximum number of silences that a single user can have, including expired silences. 0 = no limit.")
 	f.IntVar(&l.AlertmanagerMaxSilencesSizeBytes, "alertmanager.max-silences-size-bytes", 0, "Maximum size of individual silences that a single user can have. 0 = no limit.")
 	f.IntVar(&l.AlertmanagerReadAPIMaxAlertsCount, "alertmanager.read-api-max-alerts-counts", 0, "Maximum total number of alerts that the alert manager read api can return. 0 = no limit.")
+	f.IntVar(&l.AlertmanagerAlertLifeCycleObserverLevel, "alertmanager.alert-lifecycle-observer-level", 0, "Level of logs the LifeCycleObserver will collect. 0 = no logs.")
 }
 
 // Validate the limits config and returns an error if the validation
@@ -1093,6 +1096,10 @@ func (o *Overrides) AlertmanagerMaxSilencesCount(userID string) int {
 
 func (o *Overrides) AlertmanagerMaxSilenceSizeBytes(userID string) int {
 	return o.GetOverridesForUser(userID).AlertmanagerMaxSilencesSizeBytes
+}
+
+func (o *Overrides) AlertmanagerAlertLifeCycleObserverLevel(userID string) int {
+	return o.GetOverridesForUser(userID).AlertmanagerAlertLifeCycleObserverLevel
 }
 
 func (o *Overrides) DisabledRuleGroups(userID string) DisabledRuleGroups {

@@ -19,6 +19,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
+	"github.com/prometheus/alertmanager/alertobserver"
 	"github.com/prometheus/alertmanager/api"
 	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/cluster/clusterpb"
@@ -130,6 +131,8 @@ type Alertmanager struct {
 	configHashMetric prometheus.Gauge
 
 	rateLimitedNotifications *prometheus.CounterVec
+
+	alertLCObserver alertobserver.LifeCycleObserver
 }
 
 var (
@@ -165,7 +168,7 @@ type Replicator interface {
 }
 
 // New creates a new Alertmanager.
-func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
+func New(cfg *Config, reg *prometheus.Registry, o alertobserver.LifeCycleObserver) (*Alertmanager, error) {
 	if cfg.TenantDataDir == "" {
 		return nil, fmt.Errorf("directory for tenant-specific AlertManager is not configured")
 	}
@@ -184,6 +187,7 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 			Help: "Number of rate-limited notifications per integration.",
 		}, []string{"integration"}), // "integration" is consistent with other alertmanager metrics.
 
+		alertLCObserver: o,
 	}
 
 	am.registry = reg
@@ -277,7 +281,7 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 
 	var callback mem.AlertStoreCallback
 	if am.cfg.Limits != nil {
-		callback = newAlertsLimiter(am.cfg.UserID, am.cfg.Limits, reg)
+		callback = newAlertsLimiter(am.cfg.UserID, am.cfg.Limits, reg, o)
 	}
 	am.alerts, err = mem.NewAlerts(context.Background(), am.alertMarker, am.cfg.GCInterval, callback, util_log.GoKitLogToSlog(am.logger), am.registry)
 	if err != nil {
@@ -305,7 +309,8 @@ func New(cfg *Config, reg *prometheus.Registry) (*Alertmanager, error) {
 		GroupInfoFunc: func(f1 func(*dispatch.Route) bool) dispatch.AlertGroupInfos {
 			return am.dispatcher.GroupInfos(f1)
 		},
-		APICallback: apiCallback,
+		APICallback:     apiCallback,
+		AlertLCObserver: am.alertLCObserver,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create api: %v", err)
@@ -428,6 +433,7 @@ func (am *Alertmanager) ApplyConfig(userID string, conf *config.Config, rawCfg s
 		am.groupMarker,
 		am.nflog,
 		am.state,
+		am.alertLCObserver,
 	)
 	am.lastPipeline = pipeline
 	am.dispatcher = dispatch.NewDispatcher(
@@ -439,6 +445,7 @@ func (am *Alertmanager) ApplyConfig(userID string, conf *config.Config, rawCfg s
 		&dispatcherLimits{tenant: am.cfg.UserID, limits: am.cfg.Limits},
 		util_log.GoKitLogToSlog(log.With(am.logger, "component", "dispatcher")),
 		am.dispatcherMetrics,
+		am.alertLCObserver,
 	)
 
 	go am.dispatcher.Run()
@@ -713,9 +720,11 @@ type alertsLimiter struct {
 	sizes     map[model.Fingerprint]int
 	count     int
 	totalSize int
+
+	alertLCObserver alertobserver.LifeCycleObserver
 }
 
-func newAlertsLimiter(tenant string, limits Limits, reg prometheus.Registerer) *alertsLimiter {
+func newAlertsLimiter(tenant string, limits Limits, reg prometheus.Registerer, o alertobserver.LifeCycleObserver) *alertsLimiter {
 	limiter := &alertsLimiter{
 		tenant: tenant,
 		limits: limits,
@@ -724,6 +733,7 @@ func newAlertsLimiter(tenant string, limits Limits, reg prometheus.Registerer) *
 			Name: "alertmanager_alerts_insert_limited_total",
 			Help: "Number of failures to insert new alerts to in-memory alert store.",
 		}),
+		alertLCObserver: o,
 	}
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
@@ -762,6 +772,10 @@ func (a *alertsLimiter) PreStore(alert *types.Alert, existing bool) error {
 
 	if !existing && countLimit > 0 && (a.count+1) > countLimit {
 		a.failureCounter.Inc()
+		if a.alertLCObserver != nil {
+			m := alertobserver.AlertEventMeta{"msg": "count limit"}
+			a.alertLCObserver.Observe(alertobserver.EventAlertRejected, []*types.Alert{alert}, m)
+		}
 		return fmt.Errorf(errTooManyAlerts, countLimit, alert.Name())
 	}
 
@@ -771,6 +785,10 @@ func (a *alertsLimiter) PreStore(alert *types.Alert, existing bool) error {
 
 	if sizeLimit > 0 && (a.totalSize+sizeDiff) > sizeLimit {
 		a.failureCounter.Inc()
+		if a.alertLCObserver != nil {
+			m := alertobserver.AlertEventMeta{"msg": "size limit"}
+			a.alertLCObserver.Observe(alertobserver.EventAlertRejected, []*types.Alert{alert}, m)
+		}
 		return fmt.Errorf(errAlertsTooBig, sizeLimit)
 	}
 
