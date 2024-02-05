@@ -164,6 +164,8 @@ type RulesLimits interface {
 	RulerQueryOffset(userID string) time.Duration
 	DisabledRuleGroups(userID string) validation.DisabledRuleGroups
 	RulerExternalLabels(userID string) labels.Labels
+	S3SSEKMSKeyID(userId string) string
+	KMSEncryptionWorkspaceKey(userId string) string
 }
 
 // EngineQueryFunc returns a new engine query function validating max queryLength.

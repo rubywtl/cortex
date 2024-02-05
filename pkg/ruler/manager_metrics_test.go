@@ -606,7 +606,8 @@ func TestRuleEvalMetricsDeletePerUserMetrics(t *testing.T) {
 
 func TestRuleGroupMetrics(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
-	m := NewRuleGroupMetrics(reg, util.NewAllowedTenants(nil, []string{"fake3"}))
+	allowedTenants.set(nil, util.NewAllowedTenants(nil, []string{"fake3"}))
+	m := NewRuleGroupMetrics(reg, allowedTenants)
 	m.UpdateRuleGroupsInStore(map[string]int{
 		"fake1": 10,
 		"fake2": 20,

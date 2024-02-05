@@ -43,7 +43,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cortexproject/cortex/pkg/cortexpb"
-	github_com_cortexproject_cortex_pkg_cortexpb "github.com/cortexproject/cortex/pkg/cortexpb"
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 	"github.com/cortexproject/cortex/pkg/querier"
 	"github.com/cortexproject/cortex/pkg/ring"
@@ -95,6 +94,8 @@ type ruleLimits struct {
 	maxQueryLength       time.Duration
 	queryOffset          time.Duration
 	externalLabels       labels.Labels
+	s3SseKmsKeyId             string
+	kmsEncryptionWorkspaceKey string
 }
 
 func (r *ruleLimits) setRulerExternalLabels(lset labels.Labels) {
@@ -131,6 +132,14 @@ func (r *ruleLimits) MaxQueryLength(_ string) time.Duration {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 	return r.maxQueryLength
+}
+
+func (r ruleLimits) S3SSEKMSKeyID(_ string) string {
+	return r.s3SseKmsKeyId
+}
+
+func (r ruleLimits) KMSEncryptionWorkspaceKey(_ string) string {
+	return r.kmsEncryptionWorkspaceKey
 }
 
 func (r *ruleLimits) RulerQueryOffset(_ string) time.Duration {

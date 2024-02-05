@@ -13,21 +13,32 @@ import (
 	logutil "github.com/cortexproject/cortex/pkg/util/log"
 )
 
+type DisabledReason int
+
+const (
+	keyPropagationDelay DisabledReason = iota
+	other
+)
+
+const errCmkConfigurationNotSet = "cmk configuration not set"
+
 var (
-	allowedTenants = &cmkAllowedTenants{disabled: make(map[string]struct{})}
+	allowedTenants = &cmkAllowedTenants{disabled: make(map[string]DisabledReason)}
 )
 
 type cmkMapper struct {
 	*mapper
 }
 
+func initAllowedTenants(cfg Config, limits RulesLimits) *cmkAllowedTenants {
+	allowedTenants.set(limits, util.NewAllowedTenants(cfg.EnabledTenants, cfg.DisabledTenants))
+	return allowedTenants
+}
+
 func newMapperCmk(cfg Config, logger log.Logger) *cmkMapper {
 	m := &cmkMapper{
 		mapper: newMapper(cfg.RulePath, logger),
 	}
-	allowedTenants.m.Lock()
-	defer allowedTenants.m.Unlock()
-	allowedTenants.AllowedTenants = util.NewAllowedTenants(cfg.EnabledTenants, cfg.DisabledTenants)
 	m.cleanup()
 
 	return m
@@ -41,13 +52,17 @@ func (m *cmkMapper) MapRules(user string, ruleConfigs map[string][]rulefmt.RuleG
 		err := cmk.Config.PreCreationHook(user, udir, userLogger,
 			func() { allowedTenants.enable(user) },
 			func(err error) error {
-				allowedTenants.disable(user)
+				allowedTenants.disable(user, other)
 				return nil
 			},
 		)
 
 		if err != nil {
-			allowedTenants.disable(user)
+			if err.Error() == errCmkConfigurationNotSet {
+				allowedTenants.disable(user, keyPropagationDelay)
+			} else {
+				allowedTenants.disable(user, other)
+			}
 			return true, []string{}, nil
 		}
 	}
@@ -59,13 +74,14 @@ type cmkAllowedTenants struct {
 	m sync.RWMutex
 	*util.AllowedTenants
 	// If empty, no tenants are disabled. If not empty, tenants in the map are disabled.
-	disabled map[string]struct{}
+	disabled map[string]DisabledReason
+	limits   RulesLimits
 }
 
-func (a *cmkAllowedTenants) disable(tenantID string) {
+func (a *cmkAllowedTenants) disable(tenantID string, reason DisabledReason) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	a.disabled[tenantID] = struct{}{}
+	a.disabled[tenantID] = reason
 }
 
 func (a *cmkAllowedTenants) enable(tenantID string) {
@@ -74,12 +90,23 @@ func (a *cmkAllowedTenants) enable(tenantID string) {
 	delete(a.disabled, tenantID)
 }
 
+func (a *cmkAllowedTenants) set(limits RulesLimits, tenants *util.AllowedTenants) {
+	a.m.Lock()
+	defer a.m.Unlock()
+	allowedTenants.limits = limits
+	allowedTenants.AllowedTenants = tenants
+}
+
 func (a *cmkAllowedTenants) IsAllowed(tenantID string) bool {
 	a.m.RLock()
 	defer a.m.RUnlock()
-	if _, ok := a.disabled[tenantID]; ok {
+	if reason, ok := a.disabled[tenantID]; ok {
+		if reason == keyPropagationDelay {
+			// allow tenant if cmk config is propagated
+			propagated := a.limits.S3SSEKMSKeyID(tenantID) != "" && a.limits.KMSEncryptionWorkspaceKey(tenantID) != ""
+			return propagated && a.AllowedTenants.IsAllowed(tenantID)
+		}
 		return false
 	}
-
 	return a.AllowedTenants.IsAllowed(tenantID)
 }
