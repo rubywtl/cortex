@@ -1054,89 +1054,6 @@ func (r *Ruler) GetRules(ctx context.Context, rulesRequest RulesRequest) (*Rules
 	return &response, err
 }
 
-// GetRuleInfos retrieves the running rules from this ruler and all running rulers in the ring if
-// sharding is enabled
-func (r *Ruler) GetRuleInfos(ctx context.Context, ruleInfosRequest RuleInfosRequest) ([]*RuleInfosResponse, error) {
-	userID, err := tenant.TenantID(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("no user id found in context")
-	}
-
-	if r.cfg.EnableSharding {
-		return r.getShardedRuleInfos(ctx, userID, ruleInfosRequest)
-	}
-
-	response, err := r.getLocalRuleInfos(userID, ruleInfosRequest)
-	return []*RuleInfosResponse{&response}, err
-}
-
-func (r *Ruler) getLocalRuleInfos(userID string, ruleInfosRequest RuleInfosRequest) (RuleInfosResponse, error) {
-
-	groupDescs, err := r.getLocalRules(userID, RulesRequest{
-		RuleNames:      ruleInfosRequest.GetRuleNames(),
-		RuleGroupNames: ruleInfosRequest.GetRuleGroupNames(),
-		Files:          ruleInfosRequest.GetFiles(),
-		Type:           ruleInfosRequest.GetType(),
-		Matchers:       ruleInfosRequest.GetMatches(),
-	}, false)
-
-	if err != nil {
-		return RuleInfosResponse{
-			Groups:    nil,
-			NextToken: "",
-		}, err
-	}
-
-	sort.Sort(GroupStateDescs(groupDescs))
-
-	returnGroupDescs := make([]*GroupInfoStateDesc, 0, len(groupDescs))
-	for _, group := range groupDescs {
-
-		// Skip the rule group if the next token is set and hasn't arrived the nextToken item yet.
-		groupID := getRuleGroupNextToken(group.Group.Namespace, group.Group.Name)
-		if len(ruleInfosRequest.NextToken) > 0 && ruleInfosRequest.NextToken >= groupID {
-			continue
-		}
-
-		groupDesc := &GroupInfoStateDesc{
-			Group:               group.Group,
-			EvaluationTimestamp: group.EvaluationTimestamp,
-			EvaluationDuration:  group.EvaluationDuration,
-		}
-		for _, rule := range group.ActiveRules {
-			alertsDesc := rule.Alerts
-			hasMore := false
-			if ruleInfosRequest.MaxAlerts >= 0 && len(rule.Alerts) > int(ruleInfosRequest.MaxAlerts) {
-				alertsDesc = alertsDesc[:int(ruleInfosRequest.MaxAlerts)]
-				hasMore = true
-			}
-			ruleDesc := &RuleInfoStateDesc{
-				Rule:      rule.Rule,
-				State:     rule.State,
-				Health:    rule.Health,
-				LastError: rule.LastError,
-				AlertInfo: &AlertInfosStateDesc{
-					Alerts:  alertsDesc,
-					HasMore: hasMore,
-				},
-				EvaluationTimestamp: rule.EvaluationTimestamp,
-				EvaluationDuration:  rule.EvaluationDuration,
-			}
-			groupDesc.ActiveRules = append(groupDesc.ActiveRules, ruleDesc)
-		}
-		if len(groupDesc.ActiveRules) > 0 {
-			returnGroupDescs = append(returnGroupDescs, groupDesc)
-		}
-	}
-
-	returnGroupDescs, nextToken := TruncateGroupInfos(returnGroupDescs, int(ruleInfosRequest.MaxRuleGroups))
-
-	return RuleInfosResponse{
-		Groups:    returnGroupDescs,
-		NextToken: nextToken,
-	}, nil
-}
-
 func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeBackups bool) (RulesResponse, error) {
 	groups := r.manager.GetRules(userID)
 
@@ -1198,7 +1115,7 @@ func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeB
 			EvaluationTimestamp: group.GetLastEvaluation(),
 			EvaluationDuration:  group.GetEvaluationTime(),
 		}
-		for _, r := range group.Rules() {
+		for i, r := range group.Rules() {
 			if len(ruleNameSet) > 0 {
 				if _, OK := ruleNameSet[r.Name()]; !OK {
 					continue
@@ -1250,6 +1167,7 @@ func (r *Ruler) getLocalRules(userID string, rulesRequest RulesRequest, includeB
 						KeepFiringFor: rule.KeepFiringFor(),
 						Labels:        cortexpb.FromLabelsToLabelAdapters(rule.Labels()),
 						Annotations:   cortexpb.FromLabelsToLabelAdapters(rule.Annotations()),
+						Order:         int64(i),
 					},
 					State:               rule.State().String(),
 					Health:              string(rule.Health()),
@@ -1722,51 +1640,6 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 	}, err
 }
 
-func (r *Ruler) getShardedRuleInfos(ctx context.Context, userID string, ruleInfosRequest RuleInfosRequest) ([]*RuleInfosResponse, error) {
-
-	var (
-		mergedMx sync.Mutex
-		merged   []*RuleInfosResponse
-	)
-
-	ctx, err := user.InjectIntoGRPCRequest(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("unable to inject user ID into grpc request, %v", err)
-	}
-
-	jobs, failedZones, _, _, err := r.getRingJobs(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(failedZones) > 0 {
-		// for now RulesInfos api don't support HA
-		return nil, ring.ErrTooManyUnhealthyInstances
-	}
-
-	err = concurrency.ForEach(ctx, jobs, len(jobs), func(ctx context.Context, job interface{}) error {
-		addr := job.(string)
-
-		rulerClient, err := r.clientsPool.GetClientFor(addr)
-		if err != nil {
-			return errors.Wrapf(err, "unable to get client for ruler %s", addr)
-		}
-
-		newGrps, err := rulerClient.RuleInfos(ctx, &ruleInfosRequest)
-		if err != nil {
-			return errors.Wrapf(err, "unable to retrieve rules from ruler %s", addr)
-		}
-
-		mergedMx.Lock()
-		merged = append(merged, newGrps)
-		mergedMx.Unlock()
-
-		return nil
-	})
-
-	return merged, err
-}
-
 // Rules implements the rules service
 func (r *Ruler) Rules(ctx context.Context, in *RulesRequest) (*RulesResponse, error) {
 	userID, err := tenant.TenantID(ctx)
@@ -1788,21 +1661,6 @@ func (r *Ruler) Rules(ctx context.Context, in *RulesRequest) (*RulesResponse, er
 func (r *Ruler) HasMaxRuleGroupsLimit(userID string) bool {
 	limit := r.limits.RulerMaxRuleGroupsPerTenant(userID)
 	return limit > 0
-}
-
-// RuleInfos implements the rules service for pagination api
-func (r *Ruler) RuleInfos(ctx context.Context, in *RuleInfosRequest) (*RuleInfosResponse, error) {
-	userID, err := tenant.TenantID(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("no user id found in context")
-	}
-
-	groupDescs, err := r.getLocalRuleInfos(userID, *in)
-	if err != nil {
-		return nil, err
-	}
-
-	return &groupDescs, nil
 }
 
 // AssertMaxRuleGroups limit has not been reached compared to the current

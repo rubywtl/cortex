@@ -77,3 +77,7 @@ func (m *mockRulerServer) Rules(context.Context, *RulesRequest) (*RulesResponse,
 func (m *mockRulerServer) RuleInfos(ctx context.Context, in *RuleInfosRequest) (*RuleInfosResponse, error) {
 	return &RuleInfosResponse{}, nil
 }
+
+func (m *mockRulerServer) AlertInfos(ctx context.Context, in *AlertInfosRequest) (*AlertInfosResponse, error) {
+	return &AlertInfosResponse{}, nil
+}

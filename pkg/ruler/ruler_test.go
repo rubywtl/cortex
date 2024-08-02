@@ -303,6 +303,10 @@ func (c *mockRulerClient) RuleInfos(ctx context.Context, in *RuleInfosRequest, _
 	return c.ruler.RuleInfos(ctx, in)
 }
 
+func (c *mockRulerClient) AlertInfos(ctx context.Context, in *AlertInfosRequest, _ ...grpc.CallOption) (*AlertInfosResponse, error) {
+	return c.ruler.AlertInfos(ctx, in)
+}
+
 func (c *mockRulerClient) LivenessCheck(ctx context.Context, in *LivenessCheckRequest, opts ...grpc.CallOption) (*LivenessCheckResponse, error) {
 
 	if c.ruler.State() == services.Terminated {
@@ -644,143 +648,6 @@ func TestRuler_Rules(t *testing.T) {
 	rg = rls.Groups[0]
 	expectedRg = mockRules["user2"][0]
 	compareRuleGroupDescToStateDesc(t, expectedRg, rg)
-}
-
-func TestRuler_RuleInfos(t *testing.T) {
-	mockRules := map[string]rulespb.RuleGroupList{
-		"user1": {
-			&rulespb.RuleGroupDesc{
-				Name:      "group1",
-				Namespace: "namespace1",
-				User:      "user1",
-				Rules: []*rulespb.RuleDesc{
-					{
-						Alert: "UP_ALERT",
-						Expr:  "1", // always fire for this test
-					},
-				},
-				Interval: interval,
-			},
-			&rulespb.RuleGroupDesc{
-				Name:      "group2",
-				Namespace: "namespace2",
-				User:      "user1",
-				Rules: []*rulespb.RuleDesc{
-					{
-						Alert: "UP_ALERT",
-						Expr:  "1", // always fire for this test
-					},
-				},
-				Interval: interval,
-			},
-			&rulespb.RuleGroupDesc{
-				Name:      "group3",
-				Namespace: "namespace3",
-				User:      "user1",
-				Rules: []*rulespb.RuleDesc{
-					{
-						Alert: "UP_ALERT",
-						Expr:  "1", // always fire for this test
-					},
-				},
-				Interval: interval,
-			},
-		},
-	}
-
-	// NEXT, set up ruler config
-	store := newMockRuleStore(mockRules, nil)
-	rulerCfg := defaultRulerConfig(t)
-
-	// create a ruler but don't start it. instead, we'll evaluate the rule groups manually.
-	r := newTestRuler(t, rulerCfg, store, nil)
-	defer services.StopAndAwaitTerminated(context.Background(), r) //nolint:errcheck
-
-	ruleGroup := r.manager.GetRules("user1")
-
-	// NEXT, evaluate the rule group the first time and assert
-	ctx := user.InjectOrgID(context.Background(), "user1")
-	for _, rg := range ruleGroup {
-		rg.Eval(ctx, time.Now().UTC())
-	}
-
-	type testCase struct {
-		orgID                string
-		rulesRequest         *RuleInfosRequest
-		expectedRgLength     int
-		expectedAlertsLength int
-		expectedRg           rulespb.RuleGroupList
-		hasMore              bool
-		expectNextToken      string
-	}
-
-	testCases := map[string]testCase{
-		"No max items, user1": {
-			orgID:                "user1",
-			rulesRequest:         &RuleInfosRequest{MaxAlerts: -1, MaxRuleGroups: -1},
-			expectedRgLength:     3,
-			expectedAlertsLength: 1,
-			expectedRg:           mockRules["user1"],
-			hasMore:              false,
-			expectNextToken:      "",
-		},
-		"Has max alerts, user1": {
-			orgID:                "user1",
-			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: -1},
-			expectedRgLength:     3,
-			expectedAlertsLength: 0,
-			expectedRg:           mockRules["user1"],
-			hasMore:              true,
-			expectNextToken:      "",
-		},
-		"Has max rule groups, user1": {
-			orgID:                "user1",
-			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 1},
-			expectedRgLength:     1,
-			expectedAlertsLength: 0,
-			expectedRg:           mockRules["user1"],
-			hasMore:              true,
-			expectNextToken:      getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name),
-		},
-		"Has max rule groups and start next token, user1": {
-			orgID:                "user1",
-			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 1, NextToken: getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name)},
-			expectedRgLength:     1,
-			expectedAlertsLength: 0,
-			expectedRg:           mockRules["user1"],
-			hasMore:              true,
-			expectNextToken:      getRuleGroupNextToken(mockRules["user1"][2].Namespace, mockRules["user1"][2].Name),
-		},
-		"Has max rule groups = 2 and start next token, user1": {
-			orgID:                "user1",
-			rulesRequest:         &RuleInfosRequest{MaxAlerts: 0, MaxRuleGroups: 2, NextToken: getRuleGroupNextToken(mockRules["user1"][1].Namespace, mockRules["user1"][1].Name)},
-			expectedRgLength:     2,
-			expectedAlertsLength: 0,
-			expectedRg:           mockRules["user1"],
-			hasMore:              true,
-			expectNextToken:      "",
-		},
-	}
-
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			ctx := user.InjectOrgID(context.Background(), tc.orgID)
-			rls, err := r.RuleInfos(ctx, tc.rulesRequest)
-			require.NoError(t, err)
-			require.Len(t, rls.Groups, tc.expectedRgLength)
-			for _, rg := range rls.Groups {
-				for j, expectRG := range tc.expectedRg {
-					if (rg.Group.Namespace == tc.expectedRg[j].Namespace) && (rg.Group.Name == tc.expectedRg[j].Name) {
-						compareRuleGroupDescToResponseDesc(t, expectRG, rg)
-					}
-				}
-			}
-			require.Equal(t, tc.expectNextToken, rls.NextToken)
-			require.Equal(t, tc.expectedAlertsLength, len(rls.Groups[0].ActiveRules[0].AlertInfo.Alerts))
-			require.Equal(t, tc.hasMore, rls.Groups[0].ActiveRules[0].AlertInfo.HasMore)
-		})
-	}
-
 }
 
 func compareRuleGroupDescToStateDesc(t *testing.T, expected *rulespb.RuleGroupDesc, got *GroupStateDesc) {
@@ -1250,6 +1117,40 @@ func TestGetRules(t *testing.T) {
 			},
 			expectedClientCallCount: 2,
 		},
+		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter and one ruler is in LEAVING state": {
+			sharding:         true,
+			shuffleShardSize: 2,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulerStateMap:    rulerStateMapOneLeaving,
+			rulesRequest: RulesRequest{
+				Type: recordingRuleFilter,
+			},
+			ruleInfosRequest: RuleInfosRequest{
+				Type:          recordingRuleFilter,
+				MaxRuleGroups: -1,
+			},
+			expectedCount: map[string]int{
+				"user1": 3,
+				"user2": 5,
+				"user3": 1,
+			},
+			expectedClientCallCount: 2,
+		},
+		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter and one ruler is in Pending state": {
+			sharding:         true,
+			shuffleShardSize: 2,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulerStateMap:    rulerStateMapOnePending,
+			rulesRequest: RulesRequest{
+				Type: recordingRuleFilter,
+			},
+			ruleInfosRequest: RuleInfosRequest{
+				Type:          recordingRuleFilter,
+				MaxRuleGroups: -1,
+			},
+			expectedError:           ring.ErrTooManyUnhealthyInstances,
+			expectedClientCallCount: 0,
+		},
 		"Shuffle Sharding and ShardSize = 2 with Rule label Filter": {
 			sharding:         true,
 			shuffleShardSize: 2,
@@ -1307,90 +1208,6 @@ func TestGetRules(t *testing.T) {
 			},
 			expectedClientCallCount: 2,
 		},
-		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter and one ruler is in LEAVING state": {
-			sharding:         true,
-			shuffleShardSize: 2,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulerStateMap:    rulerStateMapOneLeaving,
-			rulesRequest: RulesRequest{
-				Type:          recordingRuleFilter,
-				MaxRuleGroups: -1,
-			},
-			ruleInfosRequest: RuleInfosRequest{
-				Type:          recordingRuleFilter,
-				MaxRuleGroups: -1,
-			},
-			expectedCount: map[string]int{
-				"user1": 3,
-				"user2": 5,
-				"user3": 1,
-			},
-			expectedClientCallCount: 2,
-		},
-		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter and one ruler is in Pending state": {
-			sharding:         true,
-			shuffleShardSize: 2,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulerStateMap:    rulerStateMapOnePending,
-			rulesRequest: RulesRequest{
-				Type:          recordingRuleFilter,
-				MaxRuleGroups: -1,
-			},
-			ruleInfosRequest: RuleInfosRequest{
-				Type:          recordingRuleFilter,
-				MaxRuleGroups: -1,
-			},
-			expectedError:           ring.ErrTooManyUnhealthyInstances,
-			expectedClientCallCount: 0,
-		},
-		"Shuffle Sharding and ShardSize = 2 with Rule label Filter": {
-			sharding:         true,
-			shuffleShardSize: 2,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulesRequest: RulesRequest{
-				Matchers:      []string{`{alertname="atest_user1_group1_rule_1"}`},
-				MaxRuleGroups: -1,
-			},
-			rulerStateMap: rulerStateMapAllActive,
-			expectedCount: map[string]int{
-				"user1": 1,
-				"user2": 0,
-				"user3": 0,
-			},
-			expectedClientCallCount: 2,
-		},
-		"Shuffle Sharding and ShardSize = 2 with Rule label Filter match 2 rules": {
-			sharding:         true,
-			shuffleShardSize: 2,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulesRequest: RulesRequest{
-				Matchers:      []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
-				MaxRuleGroups: -1,
-			},
-			rulerStateMap: rulerStateMapAllActive,
-			expectedCount: map[string]int{
-				"user1": 1,
-				"user2": 2,
-				"user3": 0,
-			},
-			expectedClientCallCount: 2,
-		},
-		"Shuffle Sharding and ShardSize = 2 with Rule label Filter match templating label": {
-			sharding:         true,
-			shuffleShardSize: 2,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulesRequest: RulesRequest{
-				Matchers:      []string{`{templatedlabel="{{ $externalURL }}"}`},
-				MaxRuleGroups: -1,
-			},
-			rulerStateMap: rulerStateMapAllActive,
-			expectedCount: map[string]int{
-				"user1": 0,
-				"user2": 0,
-				"user3": 1,
-			},
-			expectedClientCallCount: 2,
-		},
 		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled with labels filter": {
 			sharding:          true,
 			shuffleShardSize:  3,
@@ -1422,21 +1239,6 @@ func TestGetRules(t *testing.T) {
 				"user1": 3,
 				"user2": 5,
 				"user3": 1,
-			},
-			expectedClientCallCount: 3,
-		},
-		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled with labels filter": {
-			sharding:         true,
-			shuffleShardSize: 3,
-			shardingStrategy: util.ShardingStrategyShuffle,
-			rulerStateMap:    rulerStateMapAllActive,
-			rulesRequest: RulesRequest{
-				Matchers: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
-			},
-			expectedCount: map[string]int{
-				"user1": 1,
-				"user2": 2,
-				"user3": 0,
 			},
 			expectedClientCallCount: 3,
 		},

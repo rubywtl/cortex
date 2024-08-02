@@ -364,6 +364,7 @@ func (a *API) RegisterRulerAPI(r *ruler.API) {
 	a.RegisterRoute(path.Join(a.cfg.PrometheusHTTPPrefix, "/api/v1/rules"), http.HandlerFunc(r.PrometheusRules), true, "GET")
 	a.RegisterRoute(path.Join(a.cfg.PrometheusHTTPPrefix, "/api/v1/ruleinfos"), http.HandlerFunc(r.PrometheusRuleInfos), true, "GET")
 	a.RegisterRoute(path.Join(a.cfg.PrometheusHTTPPrefix, "/api/v1/alerts"), http.HandlerFunc(r.PrometheusAlerts), true, "GET")
+	a.RegisterRoute(path.Join(a.cfg.PrometheusHTTPPrefix, "/api/v1/alertinfos"), http.HandlerFunc(r.PrometheusAlertInfos), true, "GET")
 
 	// Ruler API Routes
 	a.RegisterRoute("/api/v1/rules", http.HandlerFunc(r.ListRules), true, "GET")
