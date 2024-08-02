@@ -187,6 +187,12 @@ func (a *API) PrometheusRules(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	quorum := strings.ToLower(req.URL.Query().Get("quorum"))
+	if quorum != "" && quorum != strongQuorumFilter && quorum != weakQuorumFilter {
+		util_api.RespondError(logger, w, v1.ErrBadData, fmt.Sprintf("unsupported quorum value %q", quorum), http.StatusBadRequest)
+		return
+	}
+
 	_, err = parseMatchersParam(req.Form["match[]"])
 	if err != nil {
 		level.Error(logger).Log("msg", "error parsing match query params", "err", err)
@@ -217,6 +223,7 @@ func (a *API) PrometheusRules(w http.ResponseWriter, req *http.Request) {
 		ExcludeAlerts:  excludeAlerts,
 		MaxRuleGroups:  paginationRequest.MaxRuleGroups,
 		NextToken:      paginationRequest.NextToken,
+		Quorum:         quorum,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

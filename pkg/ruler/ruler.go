@@ -88,6 +88,8 @@ const (
 	unknownHealthFilter string = "unknown"
 	okHealthFilter      string = "ok"
 	errHealthFilter     string = "err"
+	strongQuorumFilter  string = "strong"
+	weakQuorumFilter    string = "weak"
 
 	// query response formats
 	queryResponseFormatJson     = "json"
@@ -1075,7 +1077,7 @@ func (r *Ruler) getLocalRuleInfos(userID string, ruleInfosRequest RuleInfosReque
 		RuleGroupNames: ruleInfosRequest.GetRuleGroupNames(),
 		Files:          ruleInfosRequest.GetFiles(),
 		Type:           ruleInfosRequest.GetType(),
-		Matches:        ruleInfosRequest.GetMatches(),
+		Matchers:       ruleInfosRequest.GetMatches(),
 	}, false)
 
 	if err != nil {
@@ -1553,10 +1555,6 @@ func (r *Ruler) ruleGroupListToGroupStateDesc(userID string, backupGroups rulesp
 				continue
 			}
 
-			if !matches(filters.matcherSets, cortexpb.FromLabelAdaptersToLabels(r.Labels)) {
-				continue
-			}
-
 			var ruleDesc *RuleStateDesc
 			query, err := cortexparser.ParseExpr(r.GetExpr())
 			if err != nil {
@@ -1655,6 +1653,13 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 		return nil, err
 	}
 
+	if rulesRequest.Quorum == strongQuorumFilter && len(failedZones) > 0 {
+		// Strong quorum is used by our internal step functions to validate if rules are being evaluated. To guarantee
+		// that rules are being evaluated we exclude backups from the result. Therefor, we have to fail if there are
+		// unhealthy rulers because there will be missing rules in that case.
+		return nil, ring.ErrTooManyUnhealthyInstances
+	}
+
 	err = concurrency.ForEach(ctx, jobs, len(jobs), func(ctx context.Context, job interface{}) error {
 		addr := job.(string)
 
@@ -1676,6 +1681,7 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 			ExcludeAlerts:  rulesRequest.GetExcludeAlerts(),
 			MaxRuleGroups:  rulesRequest.GetMaxRuleGroups(),
 			NextToken:      rulesRequest.GetNextToken(),
+			Quorum:         rulesRequest.GetQuorum(),
 		})
 
 		if err != nil {
@@ -1683,7 +1689,7 @@ func (r *Ruler) getShardedRules(ctx context.Context, userID string, rulesRequest
 			r.rulerGetRulesFailures.WithLabelValues(addr).Inc()
 			// If rules backup is enabled and there are enough rulers replicating the rules, we should
 			// be able to handle failures.
-			if r.cfg.RulesBackupEnabled() && len(jobs) >= r.cfg.Ring.ReplicationFactor {
+			if r.cfg.RulesBackupEnabled() && len(jobs) >= r.cfg.Ring.ReplicationFactor && rulesRequest.Quorum != strongQuorumFilter {
 				mtx.Lock()
 				failedZones[zoneByAddress[addr]] = struct{}{}
 				errCount += 1
@@ -1769,12 +1775,13 @@ func (r *Ruler) Rules(ctx context.Context, in *RulesRequest) (*RulesResponse, er
 		return nil, fmt.Errorf("no user id found in context")
 	}
 
-	response, err := r.getLocalRules(userID, *in, r.cfg.RulesBackupEnabled())
+	includeBackup := r.cfg.RulesBackupEnabled() && in.Quorum != strongQuorumFilter
+	groupDescs, err := r.getLocalRules(userID, *in, includeBackup)
 	if err != nil {
 		return nil, err
 	}
 
-	return &response, nil
+	return &groupDescs, nil
 }
 
 // HasMaxRuleGroupsLimit check if RulerMaxRuleGroupsPerTenant limit is set for the userID.

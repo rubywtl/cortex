@@ -18,6 +18,7 @@ option (gogoproto.unmarshaler_all) = true;
 service Ruler {
   rpc Rules(RulesRequest) returns (RulesResponse) {};
   rpc RuleInfos(RuleInfosRequest) returns (RuleInfosResponse) {};
+  rpc AlertInfos(AlertInfosRequest) returns (AlertInfosResponse) {};
   rpc LivenessCheck(LivenessCheckRequest) returns (LivenessCheckResponse){};
 }
 
@@ -32,6 +33,7 @@ message RulesRequest {
   bool excludeAlerts = 8;
   int32 maxRuleGroups = 9;
   string nextToken = 10;
+  string quorum = 99;
 }
 
 message LivenessCheckRequest{}
@@ -76,17 +78,51 @@ message AlertStateDesc {
   ];
   double value = 4;
   google.protobuf.Timestamp active_at = 5
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp fired_at = 6
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp resolved_at = 7
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp last_sent_at = 8
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp valid_until = 9
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
   google.protobuf.Timestamp keep_firing_since = 10
-      [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+}
+
+message PaginatedAlertStateDesc {
+  string state = 1;
+  repeated cortexpb.LabelPair labels = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.customtype) = "github.com/cortexproject/cortex/pkg/cortexpb.LabelAdapter"
+  ];
+  repeated cortexpb.LabelPair annotations = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.customtype) = "github.com/cortexproject/cortex/pkg/cortexpb.LabelAdapter"
+  ];
+  double value = 4;
+  google.protobuf.Timestamp active_at = 5
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Timestamp fired_at = 6
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Timestamp resolved_at = 7
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Timestamp last_sent_at = 8
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Timestamp valid_until = 9
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  google.protobuf.Timestamp keep_firing_since = 10
+  [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+  AlertBelongedRuleDesc rule = 11;
+}
+
+// AlertBelongedRuleDesc is a proto representation of the rule that this alert belong to.
+message AlertBelongedRuleDesc {
+  string namespace = 1;
+  string group = 2;
+  string name = 3;
+  string order = 4;
 }
 
 message RuleInfosRequest {
@@ -128,4 +164,20 @@ message RuleInfoStateDesc {
 message AlertInfosStateDesc {
   repeated AlertStateDesc alerts = 1;
   bool hasMore = 2;
+}
+
+message AlertInfosRequest {
+  repeated string ruleNames = 1;
+  repeated string ruleGroupNames = 2;
+  repeated string files = 3;
+  string type = 4;
+  int32 maxResults = 5;
+  string nextToken = 6;
+  repeated string matches = 7;
+}
+
+// GroupInfosStateDesc is a proto representation of a cortex rule group
+message AlertInfosResponse {
+  repeated PaginatedAlertStateDesc alerts = 1;
+  string nextToken = 2;
 }

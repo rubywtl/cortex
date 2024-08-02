@@ -1255,7 +1255,7 @@ func TestGetRules(t *testing.T) {
 			shuffleShardSize: 2,
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulesRequest: RulesRequest{
-				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`},
+				Matchers: []string{`{alertname="atest_user1_group1_rule_1"}`},
 			},
 			ruleInfosRequest: RuleInfosRequest{
 				MaxRuleGroups: -1,
@@ -1274,7 +1274,7 @@ func TestGetRules(t *testing.T) {
 			shuffleShardSize: 2,
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulesRequest: RulesRequest{
-				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
+				Matchers: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
 			},
 			ruleInfosRequest: RuleInfosRequest{
 				MaxRuleGroups: -1,
@@ -1293,7 +1293,7 @@ func TestGetRules(t *testing.T) {
 			shuffleShardSize: 2,
 			shardingStrategy: util.ShardingStrategyShuffle,
 			rulesRequest: RulesRequest{
-				Matches: []string{`{templatedlabel="{{ $externalURL }}"}`},
+				Matchers: []string{`{templatedlabel="{{ $externalURL }}"}`},
 			},
 			ruleInfosRequest: RuleInfosRequest{
 				MaxRuleGroups: -1,
@@ -1426,13 +1426,12 @@ func TestGetRules(t *testing.T) {
 			expectedClientCallCount: 3,
 		},
 		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled with labels filter": {
-			sharding:             true,
-			shuffleShardSize:     3,
-			shardingStrategy:     util.ShardingStrategyShuffle,
-			rulerStateMap:        rulerStateMapAllActive,
-			enableAPIRulesBackup: true,
+			sharding:         true,
+			shuffleShardSize: 3,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulerStateMap:    rulerStateMapAllActive,
 			rulesRequest: RulesRequest{
-				Matches: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
+				Matchers: []string{`{alertname="atest_user1_group1_rule_1"}`, `{alertname="atest_user2_group1_rule_1"}`},
 			},
 			expectedCount: map[string]int{
 				"user1": 1,
@@ -1538,6 +1537,17 @@ func TestGetRules(t *testing.T) {
 			rulesRequest: RulesRequest{
 				Type:          recordingRuleFilter,
 				MaxRuleGroups: -1,
+			},
+			expectedError: ring.ErrTooManyUnhealthyInstances,
+		},
+		"Shuffle Sharding and ShardSize = 3 and API Rules backup enabled and one ruler in pending state with strong quorum": {
+			sharding:         true,
+			shuffleShardSize: 3,
+			shardingStrategy: util.ShardingStrategyShuffle,
+			rulerStateMap:    rulerStateMapOnePending,
+			rulerAZMap:       rulerAZEvenSpread,
+			rulesRequest: RulesRequest{
+				Quorum: strongQuorumFilter,
 			},
 			expectedError: ring.ErrTooManyUnhealthyInstances,
 		},
@@ -1936,6 +1946,11 @@ func TestGetRulesFromBackup(t *testing.T) {
 	require.Equal(t, "b1", ruleStateDescriptions.Groups[0].Group.Name)
 	require.Equal(t, 1, len(ruleStateDescriptions.Groups[0].ActiveRules))
 	require.Equal(t, "rtest_user1_1", ruleStateDescriptions.Groups[0].ActiveRules[0].Rule.Record)
+
+	ruleResponse, err := rulerAddrMap["ruler1"].Rules(ctx, &RulesRequest{Quorum: strongQuorumFilter})
+	require.NoError(t, err)
+	// Rules should not include backup if strong quorum is requested
+	require.Equal(t, 2, len(ruleResponse.Groups))
 }
 
 func TestGetRules_HA(t *testing.T) {
