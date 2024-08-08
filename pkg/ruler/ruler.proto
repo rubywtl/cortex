@@ -134,6 +134,8 @@ message RuleInfosRequest {
   int32 maxRuleGroups = 6;
   string nextToken = 7;
   repeated string matches = 8;
+  string state = 9;
+  string health = 10;
 }
 
 // GroupInfosStateDesc is a proto representation of a cortex rule group

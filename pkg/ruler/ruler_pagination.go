@@ -42,6 +42,8 @@ func (r *Ruler) getLocalRuleInfos(userID string, ruleInfosRequest RuleInfosReque
 		RuleGroupNames: ruleInfosRequest.GetRuleGroupNames(),
 		Files:          ruleInfosRequest.GetFiles(),
 		Type:           ruleInfosRequest.GetType(),
+		State:          ruleInfosRequest.GetState(),
+		Health:         ruleInfosRequest.GetHealth(),
 		Matchers:       ruleInfosRequest.GetMatches(),
 	}, false)
 
