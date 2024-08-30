@@ -255,6 +255,9 @@ type Limits struct {
 	AlertmanagerAlertLifeCycleObserverLevel    int `yaml:"alertmanager_alert_lifecycle_observer_level" json:"alertmanager_alert_lifecycle_observer_level"`
 
 	DisabledRuleGroups DisabledRuleGroups `yaml:"disabled_rule_groups" json:"disabled_rule_groups" doc:"nocli|description=list of rule groups to disable"`
+
+	MaxSamplesProcessedWarningThreshold int64 `yaml:"max_samples_processed_warning_threshold" json:"max_samples_processed_warning_threshold"`
+	MaxSamplesProcessedErrorThreshold   int64 `yaml:"max_samples_processed_error_threshold" json:"max_samples_processed_error_threshold"`
 }
 
 // RegisterFlags adds the flags required to config this to the given FlagSet
@@ -855,6 +858,16 @@ func (o *Overrides) QueryPriority(userID string) QueryPriority {
 // QueryRejection returns the query reject config for the tenant
 func (o *Overrides) QueryRejection(userID string) QueryRejection {
 	return o.GetOverridesForUser(userID).QueryRejection
+}
+
+// MaxSamplesProcessedWarningThreshold returns max samples processed error threshold
+func (o *Overrides) MaxSamplesProcessedWarningThreshold(userID string) int64 {
+	return o.GetOverridesForUser(userID).MaxSamplesProcessedWarningThreshold
+}
+
+// MaxSamplesProcessedErrorThreshold returns max samples processed error threshold
+func (o *Overrides) MaxSamplesProcessedErrorThreshold(userID string) int64 {
+	return o.GetOverridesForUser(userID).MaxSamplesProcessedErrorThreshold
 }
 
 // EnforceMetricName whether to enforce the presence of a metric name.
