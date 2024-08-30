@@ -256,6 +256,7 @@ type Limits struct {
 
 	DisabledRuleGroups DisabledRuleGroups `yaml:"disabled_rule_groups" json:"disabled_rule_groups" doc:"nocli|description=list of rule groups to disable"`
 
+	ThrottleQueryByQSPEnabled           bool  `yaml:"throttle_query_by_qsp_enabled" json:"throttle_query_by_qsp_enabled" doc:"nocli|description=Enable query throttling by query samples processed"`
 	MaxSamplesProcessedWarningThreshold int64 `yaml:"max_samples_processed_warning_threshold" json:"max_samples_processed_warning_threshold"`
 	MaxSamplesProcessedErrorThreshold   int64 `yaml:"max_samples_processed_error_threshold" json:"max_samples_processed_error_threshold"`
 }
@@ -323,6 +324,7 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 	f.BoolVar(&l.QueryRejection.Enabled, "frontend.query-rejection.enabled", false, "Whether query rejection is enabled.")
 
 	f.IntVar(&l.MaxOutstandingPerTenant, "frontend.max-outstanding-requests-per-tenant", 100, "Maximum number of outstanding requests per tenant per request queue (either query frontend or query scheduler); requests beyond this error with HTTP 429.")
+	f.BoolVar(&l.ThrottleQueryByQSPEnabled, "frontend.throttle-query-by-qsp-enabled", false, "Whether throttling query by QSP is enabled.")
 
 	f.Var(&l.RulerEvaluationDelay, "ruler.evaluation-delay-duration", "Deprecated(use ruler.query-offset instead) and will be removed in v1.19.0: Duration to delay the evaluation of rules to ensure the underlying metrics have been pushed to Cortex.")
 	f.Float64Var(&l.RulerTenantShardSize, "ruler.tenant-shard-size", 0, "The default tenant's shard size when the shuffle-sharding strategy is used by ruler. When this setting is specified in the per-tenant overrides, a value of 0 disables shuffle sharding for the tenant. If the value is < 1 the shard size will be a percentage of the total rulers.")
@@ -858,6 +860,10 @@ func (o *Overrides) QueryPriority(userID string) QueryPriority {
 // QueryRejection returns the query reject config for the tenant
 func (o *Overrides) QueryRejection(userID string) QueryRejection {
 	return o.GetOverridesForUser(userID).QueryRejection
+}
+
+func (o Overrides) ThrottleQueryByQSPEnabled(userID string) bool {
+	return o.GetOverridesForUser(userID).ThrottleQueryByQSPEnabled
 }
 
 // MaxSamplesProcessedWarningThreshold returns max samples processed error threshold
