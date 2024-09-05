@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-kit/log"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
@@ -15,6 +16,8 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+	"github.com/prometheus/prometheus/tsdb/index"
+	"github.com/prometheus/prometheus/tsdb/tombstones"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/testutil/e2eutil"
@@ -69,7 +72,6 @@ func TestShardByMetricNameCompactor(t *testing.T) {
 			limits := defaultLimitsTestConfig()
 			limits.MetricNameShardSize = tc.shardSize
 			overrides := validation.NewOverrides(limits, nil)
-			require.NoError(t, err)
 			r := prometheus.NewRegistry()
 			c := &ShardByMetricNameCompactor{
 				ctx:                      ctx,
@@ -177,7 +179,6 @@ func TestShardByMetricNameCompactorHeadCompaction(t *testing.T) {
 	limits := defaultLimitsTestConfig()
 	limits.MetricNameShardSize = expectedBlocks
 	overrides := validation.NewOverrides(limits, nil)
-	require.NoError(t, err)
 	r := prometheus.NewRegistry()
 	c := &ShardByMetricNameCompactor{
 		ctx:                      ctx,
@@ -235,4 +236,158 @@ func TestShardByMetricNameCompactorHeadCompaction(t *testing.T) {
 
 	// Make sure we have total number of series correct.
 	require.Equal(t, totalSeries, seriesCount)
+}
+
+type mockBReader struct {
+	ir tsdb.IndexReader
+	cr tsdb.ChunkReader
+}
+
+func (r *mockBReader) Index() (tsdb.IndexReader, error)  { return r.ir, nil }
+func (r *mockBReader) Chunks() (tsdb.ChunkReader, error) { return r.cr, nil }
+func (r *mockBReader) Tombstones() (tombstones.Reader, error) {
+	return tombstones.NewMemTombstones(), nil
+}
+func (r *mockBReader) Meta() tsdb.BlockMeta { return tsdb.BlockMeta{MinTime: 0, MaxTime: 1000} }
+func (r *mockBReader) Size() int64          { return 0 }
+
+type mockChunkReader struct {
+	emptyChunk chunkenc.Chunk
+}
+
+func (cr mockChunkReader) ChunkOrIterable(chunks.Meta) (chunkenc.Chunk, chunkenc.Iterable, error) {
+	return cr.emptyChunk, nil, nil
+}
+
+func (cr mockChunkReader) Close() error { return nil }
+
+type mockIndexReaderWithFunc struct {
+	postingsFunc func() index.Postings
+	seriesFunc   func(builder *labels.ScratchBuilder, chks *[]chunks.Meta) error
+}
+
+func (ir mockIndexReaderWithFunc) Symbols() index.StringIter {
+	return index.NewStringListIter([]string{})
+}
+
+func (ir mockIndexReaderWithFunc) SortedLabelValues(ctx context.Context, name string, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (ir mockIndexReaderWithFunc) LabelValues(ctx context.Context, name string, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (ir mockIndexReaderWithFunc) Postings(ctx context.Context, name string, values ...string) (index.Postings, error) {
+	return ir.postingsFunc(), nil
+}
+
+func (ir mockIndexReaderWithFunc) PostingsForLabelMatching(ctx context.Context, name string, match func(value string) bool) index.Postings {
+	return nil
+}
+
+func (ir mockIndexReaderWithFunc) SortedPostings(p index.Postings) index.Postings {
+	return p
+}
+
+func (ir mockIndexReaderWithFunc) ShardedPostings(p index.Postings, shardIndex, shardCount uint64) index.Postings {
+	return nil
+}
+
+func (ir mockIndexReaderWithFunc) Series(ref storage.SeriesRef, builder *labels.ScratchBuilder, chks *[]chunks.Meta) error {
+	return ir.seriesFunc(builder, chks)
+}
+
+func (ir mockIndexReaderWithFunc) LabelNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (ir mockIndexReaderWithFunc) LabelValueFor(ctx context.Context, id storage.SeriesRef, label string) (string, error) {
+	return "", nil
+}
+
+func (ir mockIndexReaderWithFunc) LabelNamesFor(ctx context.Context, postings index.Postings) ([]string, error) {
+	return nil, nil
+}
+
+func (ir mockIndexReaderWithFunc) PostingsForAllLabelValues(ctx context.Context, name string) index.Postings {
+	return nil
+}
+
+func (ir mockIndexReaderWithFunc) Close() error { return nil }
+
+func TestShardByMetricNameCompactorSeriesNotFound(t *testing.T) {
+	logger := log.NewNopLogger()
+	slogger := promslog.NewNopLogger()
+	ctx := context.Background()
+	user := "fake"
+	chunkPool := chunkenc.NewPool()
+	dir := t.TempDir()
+	expectedBlocks := 2
+	limits := defaultLimitsTestConfig()
+	limits.MetricNameShardSize = expectedBlocks
+	overrides := validation.NewOverrides(limits, nil)
+	r := prometheus.NewRegistry()
+
+	c := &ShardByMetricNameCompactor{
+		ctx:                      ctx,
+		logger:                   logger,
+		slogger:                  slogger,
+		userID:                   user,
+		chunkPool:                chunkPool,
+		metrics:                  tsdb.NewCompactorMetrics(r),
+		maxBlockChunkSegmentSize: chunks.DefaultChunkSegmentSize,
+		overrides:                overrides,
+	}
+	// Index reader should always return series not found.
+	ir := mockIndexReaderWithFunc{
+		postingsFunc: func() index.Postings {
+			return index.NewListPostings([]storage.SeriesRef{storage.SeriesRef(1)})
+		},
+		seriesFunc: func(builder *labels.ScratchBuilder, chks *[]chunks.Meta) error {
+			return storage.ErrNotFound
+		},
+	}
+	// We expect series not found error to be ignored.
+	_, err := c.Write(dir, &mockBReader{ir: ir, cr: mockChunkReader{}}, 0, 1000, nil)
+	require.NoError(t, err)
+}
+
+func TestShardByMetricNameCompactorPostingIterError(t *testing.T) {
+	logger := log.NewNopLogger()
+	slogger := promslog.NewNopLogger()
+	ctx := context.Background()
+	user := "fake"
+	chunkPool := chunkenc.NewPool()
+	dir := t.TempDir()
+	expectedBlocks := 2
+	limits := defaultLimitsTestConfig()
+	limits.MetricNameShardSize = expectedBlocks
+	overrides := validation.NewOverrides(limits, nil)
+	r := prometheus.NewRegistry()
+
+	postingErr := errors.New("posting error")
+	c := &ShardByMetricNameCompactor{
+		ctx:                      ctx,
+		logger:                   logger,
+		slogger:                  slogger,
+		userID:                   user,
+		chunkPool:                chunkPool,
+		metrics:                  tsdb.NewCompactorMetrics(r),
+		maxBlockChunkSegmentSize: chunks.DefaultChunkSegmentSize,
+		overrides:                overrides,
+	}
+	// Index reader should always return series not found.
+	ir := mockIndexReaderWithFunc{
+		postingsFunc: func() index.Postings {
+			return index.ErrPostings(postingErr)
+		},
+		seriesFunc: func(builder *labels.ScratchBuilder, chks *[]chunks.Meta) error {
+			return storage.ErrNotFound
+		},
+	}
+	// We expect series not found error to be ignored.
+	_, err := c.Write(dir, &mockBReader{ir: ir, cr: mockChunkReader{}}, 0, 1000, nil)
+	require.Error(t, err)
+	require.Equal(t, fmt.Errorf("iterate compaction set: %w", errors.Wrap(postingErr, "iterate postings")).Error(), err.Error())
 }

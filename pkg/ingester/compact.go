@@ -3,7 +3,6 @@ package ingester
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid/v2"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
@@ -211,7 +211,7 @@ func (c *ShardByMetricNameCompactor) Write(dest string, b tsdb.BlockReader, mint
 				k, v := index.AllPostingsKey()
 				allPostings, err := reader.Postings(ctx, k, v)
 				if err != nil {
-					return index.ErrPostings(err)
+					return index.ErrPostings(errors.Wrap(err, "get postings"))
 				}
 				var builder labels.ScratchBuilder
 				var chks []chunks.Meta
@@ -219,7 +219,11 @@ func (c *ShardByMetricNameCompactor) Write(dest string, b tsdb.BlockReader, mint
 				for allPostings.Next() {
 					ref := allPostings.At()
 					if err := reader.Series(ref, &builder, &chks); err != nil {
-						return index.ErrPostings(err)
+						// Postings may be stale. Skip if no underlying series exists.
+						if errors.Is(err, storage.ErrNotFound) {
+							continue
+						}
+						return index.ErrPostings(errors.Wrapf(err, "lookup series ref: %d", ref))
 					}
 					if hash(builder.Labels().Get(labels.MetricName))%uint64(shardSize) == uint64(i) {
 						postings = append(postings, ref)
@@ -229,7 +233,7 @@ func (c *ShardByMetricNameCompactor) Write(dest string, b tsdb.BlockReader, mint
 						for _, chk := range chks {
 							c, _, err := cr.ChunkOrIterable(chk)
 							if err != nil && !errors.Is(err, storage.ErrNotFound) {
-								return index.ErrPostings(err)
+								return index.ErrPostings(errors.Wrap(err, "get chunk"))
 							}
 							// It is possible for c to be nil when it is an out of order
 							// chunk. We ignore that case for now.
@@ -238,6 +242,9 @@ func (c *ShardByMetricNameCompactor) Write(dest string, b tsdb.BlockReader, mint
 							}
 						}
 					}
+				}
+				if err := allPostings.Err(); err != nil {
+					return index.ErrPostings(errors.Wrap(err, "iterate postings"))
 				}
 				return reader.SortedPostings(index.NewListPostings(postings))
 			}
