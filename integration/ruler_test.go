@@ -361,6 +361,7 @@ func testRulerAPIWithSharding(t *testing.T, enableRulesBackup bool) {
 	}
 	if enableRulesBackup {
 		overrides["-ruler.ring.replication-factor"] = "3"
+		overrides["-ruler.enable-api-ha"] = "true"
 	}
 	rulerFlags := mergeFlags(
 		BlocksStorageFlags(),
@@ -1461,6 +1462,7 @@ func TestRulerHAEvaluation(t *testing.T) {
 		"-ruler.enable-ha-evaluation":                       "true",
 		"-ruler.poll-interval":                              "5s",
 		"-ruler.client.remote-timeout":                      "10ms",
+		"-ruler.enable-api-ha":                              "true",
 	}
 
 	rulerFlags := mergeFlags(

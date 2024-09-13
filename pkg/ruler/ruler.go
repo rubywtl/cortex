@@ -177,6 +177,7 @@ type Config struct {
 	ReportStats           func(ctx context.Context, qs stats.QueryStats, err error) `yaml:"-"`
 
 	EnableAlertStorage bool `yaml:"enable_alert_storage"`
+	EnableAPIHA        bool `yaml:"enable_api_ha"`
 
 	EnableHAEvaluation   bool          `yaml:"enable_ha_evaluation"`
 	LivenessCheckTimeout time.Duration `yaml:"liveness_check_timeout"`
@@ -270,6 +271,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	f.BoolVar(&cfg.EnableAlertStorage, "experimental.ruler.alert-storage-enabled", false, "EXPERIMENTAL: Store state for alerts using keep_firing_for to persistent storage.")
 
 	f.BoolVar(&cfg.EnableHAEvaluation, "ruler.enable-ha-evaluation", false, "Enable high availability")
+	f.BoolVar(&cfg.EnableAPIHA, "ruler.enable-api-ha", false, "Enable high availability for API")
 	f.DurationVar(&cfg.LivenessCheckTimeout, "ruler.liveness-check-timeout", 1*time.Second, "Timeout duration for non-primary rulers during liveness checks. If the check times out, the non-primary ruler will evaluate the rule group. Applicable when ruler.enable-ha-evaluation is true.")
 	cfg.RingCheckPeriod = 5 * time.Second
 }
@@ -277,7 +279,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 func (cfg *Config) RulesBackupEnabled() bool {
 	// If the replication factor is greater the  1, only the first replica is responsible for evaluating the rule,
 	// the rest of the replica will store the rule groups as backup only for API HA.
-	return cfg.Ring.ReplicationFactor > 1
+	return cfg.Ring.ReplicationFactor > 1 && cfg.EnableAPIHA
 }
 
 // MultiTenantManager is the interface of interaction with a Manager that is tenant aware.

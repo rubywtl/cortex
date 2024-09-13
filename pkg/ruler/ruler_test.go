@@ -688,6 +688,7 @@ func TestGetRules(t *testing.T) {
 		expectedError              error
 		replicationFactor          int
 		enableZoneAwareReplication bool
+		enableAPIHA                bool
 	}
 
 	ruleMap := rulesMap{
@@ -1032,6 +1033,7 @@ func TestGetRules(t *testing.T) {
 			},
 			replicationFactor:       3,
 			expectedClientCallCount: len(expectedRules),
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 2 with Rule Type Filter": {
 			sharding:         true,
@@ -1224,6 +1226,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 0,
 			},
 			expectedClientCallCount: 3,
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled": {
 			sharding:          true,
@@ -1241,6 +1244,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 1,
 			},
 			expectedClientCallCount: 3,
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled and one ruler is in Pending state": {
 			sharding:          true,
@@ -1258,6 +1262,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 1,
 			},
 			expectedClientCallCount: 2, // one of the ruler is pending, so we don't expect that ruler to be called
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 with API Rules backup enabled and two ruler is in Pending state": {
 			sharding:          true,
@@ -1270,6 +1275,7 @@ func TestGetRules(t *testing.T) {
 				MaxRuleGroups: -1,
 			},
 			expectedError: ring.ErrTooManyUnhealthyInstances,
+			enableAPIHA:   true,
 		},
 		"Shuffle Sharding and ShardSize = 3 and AZ replication with API Rules backup enabled": {
 			sharding:                   true,
@@ -1289,6 +1295,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 1,
 			},
 			expectedClientCallCount: 3,
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 and AZ replication with API Rules backup enabled and one ruler in pending state": {
 			sharding:                   true,
@@ -1308,6 +1315,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 1,
 			},
 			expectedClientCallCount: 2, // one of the ruler is pending, so we don't expect that ruler to be called
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 and AZ replication with API Rules backup enabled and one ruler in pending state and rulers are in same az": {
 			sharding:                   true,
@@ -1327,6 +1335,7 @@ func TestGetRules(t *testing.T) {
 				"user3": 1,
 			},
 			expectedClientCallCount: 2, // one of the ruler is pending, so we don't expect that ruler to be called
+			enableAPIHA:             true,
 		},
 		"Shuffle Sharding and ShardSize = 3 and AZ replication with API Rules backup enabled and two ruler in pending state": {
 			sharding:                   true,
@@ -1341,6 +1350,7 @@ func TestGetRules(t *testing.T) {
 				MaxRuleGroups: -1,
 			},
 			expectedError: ring.ErrTooManyUnhealthyInstances,
+			enableAPIHA:   true,
 		},
 		"Shuffle Sharding and ShardSize = 3 and API Rules backup enabled and one ruler in pending state with strong quorum": {
 			sharding:         true,
@@ -1352,6 +1362,7 @@ func TestGetRules(t *testing.T) {
 				Quorum: strongQuorumFilter,
 			},
 			expectedError: ring.ErrTooManyUnhealthyInstances,
+			enableAPIHA:   true,
 		},
 	}
 
@@ -1370,6 +1381,7 @@ func TestGetRules(t *testing.T) {
 
 				cfg.ShardingStrategy = tc.shardingStrategy
 				cfg.EnableSharding = tc.sharding
+				cfg.EnableAPIHA = tc.enableAPIHA
 
 				cfg.Ring = RingConfig{
 					InstanceID:   id,
@@ -1621,6 +1633,7 @@ func TestGetRulesFromBackup(t *testing.T) {
 		cfg.ShardingStrategy = util.ShardingStrategyShuffle
 		cfg.EnableSharding = true
 		cfg.EvaluationInterval = 5 * time.Minute
+		cfg.EnableAPIHA = true
 
 		cfg.Ring = RingConfig{
 			InstanceID:   id,
@@ -1842,6 +1855,7 @@ func getRulesHATest(replicationFactor int) func(t *testing.T) {
 			cfg.ShardingStrategy = util.ShardingStrategyShuffle
 			cfg.EnableSharding = true
 			cfg.EnableHAEvaluation = true
+			cfg.EnableAPIHA = true
 			cfg.EvaluationInterval = 5 * time.Minute
 
 			cfg.Ring = RingConfig{
@@ -2023,6 +2037,7 @@ func TestSharding(t *testing.T) {
 		disabledUsers       []string
 		expectedRules       expectedRulesMap
 		expectedBackupRules expectedRulesMap
+		enableAPIHA         bool
 	}
 
 	const (
@@ -2401,6 +2416,7 @@ func TestSharding(t *testing.T) {
 			shardingStrategy:  util.ShardingStrategyShuffle,
 			shuffleShardSize:  2,
 			enabledUsers:      []string{user1},
+			enableAPIHA:       true,
 
 			setupRing: func(desc *ring.Desc) {
 				desc.AddIngester(ruler1, ruler1Addr, "", sortTokens([]uint32{userToken(user1, 0) + 1, user1Group1Token + 1}), ring.ACTIVE, time.Now())
@@ -2452,6 +2468,7 @@ func TestSharding(t *testing.T) {
 					FlushCheckPeriod: 0,
 					EnabledTenants:   tc.enabledUsers,
 					DisabledTenants:  tc.disabledUsers,
+					EnableAPIHA:      tc.enableAPIHA,
 				}
 
 				r, _ := buildRuler(t, cfg, nil, store, nil)

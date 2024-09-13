@@ -269,7 +269,7 @@ func TestBackupRules(t *testing.T) {
 		1 * time.Millisecond,
 	}
 	ruleManagerFactory := RuleManagerFactory(nil, waitDurations)
-	config := Config{RulePath: dir}
+	config := Config{RulePath: dir, EnableAPIHA: true}
 	config.Ring.ReplicationFactor = 3
 	m, err := NewDefaultMultiTenantManager(config, &ruleLimits{}, ruleManagerFactory, evalMetrics, reg, log.NewNopLogger(), nil)
 	require.NoError(t, err)
