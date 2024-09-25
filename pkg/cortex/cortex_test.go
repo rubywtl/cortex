@@ -134,8 +134,7 @@ func TestCortex(t *testing.T) {
 	require.NotNil(t, serviceMap[Ring])
 	require.NotNil(t, serviceMap[DistributorService])
 
-	// check compactor and alertmanager are configured.
-	require.NotNil(t, serviceMap[Compactor])
+	// check alertmanager is configured.
 	require.NotNil(t, serviceMap[AlertManager])
 }
 

@@ -43,7 +43,7 @@ func TestParquetFuzz(t *testing.T) {
 	flags := mergeFlags(
 		baseFlags,
 		map[string]string{
-			"-target": "all,parquet-converter",
+			"-target": "all,compactor,parquet-converter",
 			"-blocks-storage.tsdb.block-ranges-period":                             "1m,24h",
 			"-blocks-storage.tsdb.ship-interval":                                   "1s",
 			"-blocks-storage.bucket-store.sync-interval":                           "1s",

@@ -917,7 +917,7 @@ func (t *Cortex) setupModuleManager() error {
 		TenantDeletion:           {API, Overrides},
 		Purger:                   {TenantDeletion},
 		TenantFederation:         {Queryable},
-		All:                      {QueryFrontend, Querier, Ingester, Distributor, Purger, StoreGateway, Ruler, Compactor, AlertManager},
+		All:                      {QueryFrontend, Querier, Ingester, Distributor, Purger, StoreGateway, Ruler, AlertManager},
 	}
 	if t.Cfg.ExternalPusher != nil && t.Cfg.ExternalQueryable != nil {
 		deps[Ruler] = []string{Overrides, RulerStorage}
