@@ -31,9 +31,9 @@ message RulesRequest {
   string health = 6;
   repeated string matchers = 7;
   bool excludeAlerts = 8;
-  int32 maxRuleGroups = 9;
-  string nextToken = 10;
-  string quorum = 99;
+  string quorum = 9;
+  int32 maxRuleGroups = 10;
+  string nextToken = 11;
 }
 
 message LivenessCheckRequest{}

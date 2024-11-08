@@ -37,7 +37,7 @@ func (r *Ruler) GetRuleInfos(ctx context.Context, ruleInfosRequest RuleInfosRequ
 
 func (r *Ruler) getLocalRuleInfos(userID string, ruleInfosRequest RuleInfosRequest) (RuleInfosResponse, error) {
 
-	groupDescs, err := r.getLocalRules(userID, RulesRequest{
+	groupDescs, err := r.getLocalRulesCopy(userID, RulesRequest{
 		RuleNames:      ruleInfosRequest.GetRuleNames(),
 		RuleGroupNames: ruleInfosRequest.GetRuleGroupNames(),
 		Files:          ruleInfosRequest.GetFiles(),
@@ -182,7 +182,7 @@ func (r *Ruler) GetAlertInfos(ctx context.Context, alertInfosRequest AlertInfosR
 
 func (r *Ruler) getLocalAlertInfos(userID string, alertInfosRequest AlertInfosRequest) (AlertInfosResponse, error) {
 
-	groupDescs, err := r.getLocalRules(userID, RulesRequest{
+	groupDescs, err := r.getLocalRulesCopy(userID, RulesRequest{
 		RuleNames:      alertInfosRequest.GetRuleNames(),
 		RuleGroupNames: alertInfosRequest.GetRuleGroupNames(),
 		Files:          alertInfosRequest.GetFiles(),

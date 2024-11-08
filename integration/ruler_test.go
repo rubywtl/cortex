@@ -595,6 +595,7 @@ func testRulesPaginationAPIWithSharding(t *testing.T, enableRulesBackup bool) {
 	}
 	if enableRulesBackup {
 		overrides["-ruler.ring.replication-factor"] = "2"
+		overrides["-ruler.enable-api-ha"] = "true"
 	}
 	rulerFlags := mergeFlags(
 		BlocksStorageFlags(),
