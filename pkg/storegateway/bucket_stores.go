@@ -693,6 +693,7 @@ func (u *BucketStores) getOrCreateStore(userID string) (*store.BucketStore, erro
 			strategy: u.shardingStrategy,
 			logger:   userLogger,
 		}),
+		store.WithMaxKeysToSkipCache(u.cfg.BucketStore.MaxKeysToSkipCache),
 	}
 	if u.logLevel.String() == "debug" {
 		bucketStoreOpts = append(bucketStoreOpts, store.WithDebugLogging())
