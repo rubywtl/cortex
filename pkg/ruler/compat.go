@@ -33,6 +33,8 @@ import (
 	"github.com/cortexproject/cortex/pkg/util/validation"
 )
 
+const defaultMaxQueryLength = 32 * 24 * time.Hour // Hard coded 32 day limit to prevent rulers from sending long term queries
+
 // Pusher is an ingester server that accepts pushes.
 type Pusher interface {
 	Push(context.Context, *cortexpb.WriteRequest) (*cortexpb.WriteResponse, error)
@@ -174,7 +176,7 @@ type RulesLimits interface {
 func EngineQueryFunc(engine promql.QueryEngine, frontendClient *frontendClient, q storage.Queryable, overrides RulesLimits, userID string, lookbackDelta time.Duration) rules.QueryFunc {
 	return func(ctx context.Context, qs string, t time.Time) (promql.Vector, error) {
 		// Enforce the max query length.
-		maxQueryLength := overrides.MaxQueryLength(userID)
+		maxQueryLength := min(defaultMaxQueryLength, overrides.MaxQueryLength(userID))
 		if maxQueryLength > 0 {
 			expr, err := cortexparser.ParseExpr(qs)
 			// If failed to parse expression, skip checking select range.
