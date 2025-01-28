@@ -213,11 +213,15 @@ type Limits struct {
 	MaxDownloadedBytesPerRequest int     `yaml:"max_downloaded_bytes_per_request" json:"max_downloaded_bytes_per_request"`
 
 	// Compactor.
-	CompactorBlocksRetentionPeriod               model.Duration `yaml:"compactor_blocks_retention_period" json:"compactor_blocks_retention_period"`
-	CompactorTenantShardSize                     float64        `yaml:"compactor_tenant_shard_size" json:"compactor_tenant_shard_size"`
-	CompactorPartitionIndexSizeBytes             int64          `yaml:"compactor_partition_index_size_bytes" json:"compactor_partition_index_size_bytes"`
-	CompactorPartitionSeriesCount                int64          `yaml:"compactor_partition_series_count" json:"compactor_partition_series_count"`
-	CompactorMetricNamePartitionSeriesCountLimit int64          `yaml:"compactor_metric_name_partition_series_count_limit" json:"compactor_metric_name_partition_series_count_limit"`
+	CompactorBlocksRetentionPeriod                model.Duration `yaml:"compactor_blocks_retention_period" json:"compactor_blocks_retention_period"`
+	CompactorTenantShardSize                      float64        `yaml:"compactor_tenant_shard_size" json:"compactor_tenant_shard_size"`
+	CompactorPartitionIndexSizeBytes              int64          `yaml:"compactor_partition_index_size_bytes" json:"compactor_partition_index_size_bytes"`
+	CompactorPartitionSeriesCount                 int64          `yaml:"compactor_partition_series_count" json:"compactor_partition_series_count"`
+	CompactorPartitionIndexSizeLimitInBytes       int64          `yaml:"compactor_partition_index_size_limit_in_bytes" json:"compactor_partition_index_size_limit_in_bytes"`
+	CompactorPartitionSeriesCountLimit            int64          `yaml:"compactor_partition_series_count_limit" json:"compactor_partition_series_count_limit"`
+	CompactorPartitionLevel1IndexSizeLimitInBytes int64          `yaml:"compactor_partition_level1_index_size_limit_in_bytes" json:"compactor_partition_level1_index_size_limit_in_bytes"`
+	CompactorPartitionLevel1SeriesCountLimit      int64          `yaml:"compactor_partition_level1_series_count_limit" json:"compactor_partition_level1_series_count_limit"`
+	CompactorMetricNamePartitionSeriesCountLimit  int64          `yaml:"compactor_metric_name_partition_series_count_limit" json:"compactor_metric_name_partition_series_count_limit"`
 
 	// Parquet converter
 	ParquetConverterEnabled         bool    `yaml:"parquet_converter_enabled" json:"parquet_converter_enabled" doc:"hidden"`
@@ -331,6 +335,10 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 
 	f.Float64Var(&l.ParquetConverterTenantShardSize, "parquet-converter.tenant-shard-size", 0, "The default tenant's shard size when the shuffle-sharding strategy is used by the parquet converter. When this setting is specified in the per-tenant overrides, a value of 0 disables shuffle sharding for the tenant. If the value is < 1 and > 0 the shard size will be a percentage of the total parquet converters.")
 	f.BoolVar(&l.ParquetConverterEnabled, "parquet-converter.enabled", false, "If set, enables the Parquet converter to create the parquet files.")
+	f.Int64Var(&l.CompactorPartitionIndexSizeLimitInBytes, "compactor.partition-index-size-limit-in-bytes", 0, "Index size limit in bytes for each compaction partition. 0 means no limit")
+	f.Int64Var(&l.CompactorPartitionSeriesCountLimit, "compactor.partition-series-count-limit", 0, "Time series count limit for each compaction partition. 0 means no limit")
+	f.Int64Var(&l.CompactorPartitionLevel1IndexSizeLimitInBytes, "compactor.partition-level1-index-size-limit-in-bytes", 0, "Index size limit in bytes for each level 1 compaction partition. 0 means no limit")
+	f.Int64Var(&l.CompactorPartitionLevel1SeriesCountLimit, "compactor.partition-level1-series-count-limit", 0, "Time series count limit for each level 1 compaction partition. 0 means no limit")
 	f.IntVar(&l.MetricNameShardSize, "compactor.metric-name-shard-size", 0, "Shard by metric name shard size.")
 	f.Int64Var(&l.CompactorMetricNamePartitionSeriesCountLimit, "compactor.metric-name-partition-series-count-limit", 0, "Time series count limit for each compaction partition by metric name. 0 means no limit")
 
@@ -938,6 +946,26 @@ func (o *Overrides) CompactorPartitionIndexSizeBytes(userID string) int64 {
 // CompactorPartitionSeriesCount returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
 func (o *Overrides) CompactorPartitionSeriesCount(userID string) int64 {
 	return o.GetOverridesForUser(userID).CompactorPartitionSeriesCount
+}
+
+// CompactorPartitionIndexSizeLimitInBytes returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
+func (o *Overrides) CompactorPartitionIndexSizeLimitInBytes(userID string) int64 {
+	return o.GetOverridesForUser(userID).CompactorPartitionIndexSizeLimitInBytes
+}
+
+// CompactorPartitionSeriesCountLimit returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
+func (o *Overrides) CompactorPartitionSeriesCountLimit(userID string) int64 {
+	return o.GetOverridesForUser(userID).CompactorPartitionSeriesCountLimit
+}
+
+// CompactorPartitionLevel1IndexSizeLimitInBytes returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
+func (o *Overrides) CompactorPartitionLevel1IndexSizeLimitInBytes(userID string) int64 {
+	return o.GetOverridesForUser(userID).CompactorPartitionLevel1IndexSizeLimitInBytes
+}
+
+// CompactorPartitionLevel1SeriesCountLimit returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
+func (o *Overrides) CompactorPartitionLevel1SeriesCountLimit(userID string) int64 {
+	return o.GetOverridesForUser(userID).CompactorPartitionLevel1SeriesCountLimit
 }
 
 // CompactorMetricNamePartitionSeriesCountLimit returns series count limit partition by metric name.
