@@ -316,6 +316,17 @@ func (c *Converter) convertUser(ctx context.Context, logger log.Logger, ring rin
 
 	uBucket := bucket.NewUserBucketClient(userID, c.bkt, c.limits)
 
+	// Run the prehook and skip this tenant if there is an error
+	if err := c.preCreationHook(userID, c.compactDirForUser(userID)); err != nil {
+		level.Error(logger).Log("msg", "failed to run pre hook", "err", err)
+		// Deleting the folder in case of errors
+		if err := os.RemoveAll(c.compactDirForUser(userID)); err != nil {
+			level.Error(logger).Log("msg", "failed to remove parquet converter work directory", "path", c.compactDirForUser(userID), "err", err)
+		}
+
+		return nil
+	}
+
 	var blockLister block.Lister
 	switch cortex_tsdb.BlockDiscoveryStrategy(c.storageCfg.BucketStore.BlockDiscoveryStrategy) {
 	case cortex_tsdb.ConcurrentDiscovery:

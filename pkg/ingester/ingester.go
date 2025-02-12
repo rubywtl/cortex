@@ -265,6 +265,10 @@ type Ingester struct {
 
 	matchersCache                storecache.MatchersCache
 	expandedPostingsCacheFactory *cortex_tsdb.ExpandedPostingsCacheFactory
+
+	// Suspended TSDBs
+	suspendedTsdbsMtx sync.RWMutex
+	suspendedTsdbs    map[string]error
 }
 
 // Shipper interface is used to have an easy way to mock it in tests.
@@ -1201,7 +1205,19 @@ func (i *Ingester) Push(ctx context.Context, req *cortexpb.WriteRequest) (*corte
 		}
 	}
 
+	err = i.getSuspendedTsdb(userID)
+
+	if err != nil {
+		return &cortexpb.WriteResponse{}, httpgrpc.Errorf(http.StatusUnprocessableEntity, "%s", wrapWithUser(err, userID).Error())
+	}
+
 	db, err := i.getOrCreateTSDB(userID, false)
+
+	var pErr *errPreHook
+	if errors.As(err, &pErr) {
+		return &cortexpb.WriteResponse{}, httpgrpc.Errorf(http.StatusUnprocessableEntity, "%s", wrapWithUser(pErr.cause, userID).Error())
+	}
+
 	if err != nil {
 		return nil, wrapWithUser(err, userID)
 	}
@@ -2207,6 +2223,12 @@ func (i *Ingester) QueryStream(req *client.QueryRequest, stream client.Ingester_
 		return err
 	}
 
+	err = i.getSuspendedTsdb(userID)
+
+	if err != nil {
+		return httpgrpc.Errorf(http.StatusUnprocessableEntity, "%s", wrapWithUser(err, userID).Error())
+	}
+
 	from, through, matchers, err := client.FromQueryRequest(i.matchersCache, req)
 	if err != nil {
 		return err
@@ -2417,6 +2439,10 @@ func (i *Ingester) getOrCreateTSDB(userID string, force bool) (*userTSDB, error)
 			level.Warn(i.logger).Log("msg", "error getting user DB but userDB is not null", "err", err, "userID", userID)
 		}
 		return db, nil
+	}
+
+	if err := i.preCreationHook(userID); err != nil {
+		return nil, err
 	}
 
 	i.stoppedMtx.Lock()
@@ -2655,7 +2681,13 @@ func (i *Ingester) openExistingTSDB(ctx context.Context) error {
 			for userID := range queue {
 				startTime := time.Now()
 
+				if err := i.preCreationHook(userID); err != nil {
+					level.Warn(logutil.WithContext(ctx, i.logger)).Log("msg", "skipping opening user tsdb due pre hook error", "err", err)
+					continue
+				}
+
 				db, err := i.createTSDB(userID)
+
 				if err != nil {
 					level.Error(logutil.WithContext(ctx, i.logger)).Log("msg", "unable to open TSDB", "err", err, "user", userID)
 					return errors.Wrapf(err, "unable to open TSDB for user %s", userID)

@@ -227,6 +227,7 @@ type Limits struct {
 	S3SSEType                 string `yaml:"s3_sse_type" json:"s3_sse_type" doc:"nocli|description=S3 server-side encryption type. Required to enable server-side encryption overrides for a specific tenant. If not set, the default S3 client settings are used."`
 	S3SSEKMSKeyID             string `yaml:"s3_sse_kms_key_id" json:"s3_sse_kms_key_id" doc:"nocli|description=S3 server-side encryption KMS Key ID. Ignored if the SSE type override is not set."`
 	S3SSEKMSEncryptionContext string `yaml:"s3_sse_kms_encryption_context" json:"s3_sse_kms_encryption_context" doc:"nocli|description=S3 server-side encryption KMS encryption context. If unset and the key ID override is set, the encryption context will not be provided to S3. Ignored if the SSE type override is not set."`
+	KMSEncryptionWorkspaceKey string `yaml:"kms_encryption_workspace_key" json:"kms_encryption_workspace_key" doc:"workspace key "`
 
 	// Alertmanager.
 	AlertmanagerReceiversBlockCIDRNetworks     flagext.CIDRSliceCSV `yaml:"alertmanager_receivers_firewall_block_cidr_networks" json:"alertmanager_receivers_firewall_block_cidr_networks"`
@@ -990,6 +991,11 @@ func (o *Overrides) S3SSEKMSKeyID(user string) string {
 // S3SSEKMSEncryptionContext returns the per-tenant S3 KMS-SSE encryption context.
 func (o *Overrides) S3SSEKMSEncryptionContext(user string) string {
 	return o.GetOverridesForUser(user).S3SSEKMSEncryptionContext
+}
+
+// KMSEncryptionWorkspaceKey returns workspace key
+func (o *Overrides) KMSEncryptionWorkspaceKey(user string) string {
+	return o.GetOverridesForUser(user).KMSEncryptionWorkspaceKey
 }
 
 // AlertmanagerReceiversBlockCIDRNetworks returns the list of network CIDRs that should be blocked

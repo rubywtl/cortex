@@ -1024,6 +1024,17 @@ func (c *Compactor) compactUser(ctx context.Context, userID string) error {
 	// out of order chunks or index file too big.
 	noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(ulogger, bucket, c.compactorCfg.MetaSyncConcurrency)
 
+	// Run the prehook and skip this tenant if there is an error
+	if err := c.preCreationHook(userID, c.compactDirForUser(userID)); err != nil {
+		level.Error(ulogger).Log("msg", "failed to run pre hook", "err", err)
+		// Deleting the folder in case of errors
+		if err := os.RemoveAll(c.compactDirForUser(userID)); err != nil {
+			level.Error(ulogger).Log("msg", "failed to remove compaction work directory", "path", c.compactDirForUser(userID), "err", err)
+		}
+
+		return nil
+	}
+
 	var blockLister block.Lister
 	switch cortex_tsdb.BlockDiscoveryStrategy(c.storageCfg.BucketStore.BlockDiscoveryStrategy) {
 	case cortex_tsdb.ConcurrentDiscovery:

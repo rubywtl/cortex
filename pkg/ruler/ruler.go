@@ -342,7 +342,7 @@ type Ruler struct {
 	rulerGetRulesFailures      *prometheus.CounterVec
 	ruleGroupMetrics           *RuleGroupMetrics
 
-	allowedTenants *util.AllowedTenants
+	allowedTenants *cmkAllowedTenants
 
 	registry prometheus.Registerer
 	logger   log.Logger
@@ -362,7 +362,7 @@ func newRuler(cfg Config, manager MultiTenantManager, reg prometheus.Registerer,
 		logger:         logger,
 		limits:         limits,
 		clientsPool:    clientPool,
-		allowedTenants: util.NewAllowedTenants(cfg.EnabledTenants, cfg.DisabledTenants),
+		allowedTenants: allowedTenants,
 
 		ringCheckErrors: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 			Name: "cortex_ruler_ring_check_errors_total",

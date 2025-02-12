@@ -35,7 +35,7 @@ type DefaultMultiTenantManager struct {
 	ruleEvalMetrics *RuleEvalMetrics
 	frontendPool    *client.Pool
 
-	mapper *mapper
+	mapper *cmkMapper
 
 	// Structs for holding per-user Prometheus rules Managers
 	// and a corresponding metrics struct
@@ -100,7 +100,7 @@ func NewDefaultMultiTenantManager(cfg Config, limits RulesLimits, managerFactory
 		notifiers:                 map[string]*rulerNotifier{},
 		userExternalLabels:        newUserExternalLabels(cfg.ExternalLabels, limits),
 		notifiersDiscoveryMetrics: notifiersDiscoveryMetrics,
-		mapper:                    newMapper(cfg.RulePath, logger),
+		mapper:                    newMapperCmk(cfg, logger),
 		userManagers:              map[string]RulesManager{},
 		userManagerMetrics:        userManagerMetrics,
 		ruleCache:                 map[string][]*promRules.Group{},

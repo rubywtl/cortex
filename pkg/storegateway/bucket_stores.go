@@ -304,6 +304,14 @@ func (u *BucketStores) syncUsersBlocks(ctx context.Context, f func(context.Conte
 		}
 
 		bs, err := u.getOrCreateStore(userID)
+
+		if err == errPreHook {
+			u.storesErrorsMu.Lock()
+			u.storesErrors[userID] = httpgrpc.Errorf(int(codes.PermissionDenied), "store error: %s", bucket.ErrCustomerManagedKeyAccessDenied)
+			u.storesErrorsMu.Unlock()
+			continue
+		}
+
 		if err != nil {
 			errsMx.Lock()
 			errs.Add(err)
@@ -596,6 +604,10 @@ func (u *BucketStores) getOrCreateStore(userID string) (*store.BucketStore, erro
 	if u.cfg.BucketStore.IgnoreBlocksWithin > 0 {
 		// Filter out blocks that are too new to be queried.
 		filters = append(filters, NewIgnoreNonQueryableBlocksFilter(userLogger, u.cfg.BucketStore.IgnoreBlocksWithin))
+	}
+
+	if err := u.preCreationHook(context.Background(), userID, u.syncDirForUser(userID)); err != nil {
+		return nil, err
 	}
 
 	// Instantiate a different blocks metadata fetcher based on whether bucket index is enabled or not.
