@@ -258,6 +258,9 @@ func (c prometheusCodec) DecodeResponse(ctx context.Context, r *http.Response, _
 	}
 	log.LogFields(otlog.Int("bytes", len(body)))
 
+	query_stats := stats.FromContext(ctx)
+	query_stats.AddAggregatedResponseBytes(uint64(len(body)))
+
 	var resp tripperware.PrometheusResponse
 	err = tripperware.UnmarshalResponse(r, body, &resp)
 

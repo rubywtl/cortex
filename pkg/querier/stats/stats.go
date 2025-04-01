@@ -16,13 +16,14 @@ var ctxKey = contextKey(0)
 
 type QueryStats struct {
 	Stats
-	QueryResponseSeries uint64
-	PriorityAssigned    bool
-	Priority            int64
-	DataSelectMaxTime   int64
-	DataSelectMinTime   int64
-	SplitInterval       time.Duration
-	m                   sync.Mutex
+	QueryResponseSeries     uint64
+	AggregatedResponseBytes uint64
+	PriorityAssigned        bool
+	Priority                int64
+	DataSelectMaxTime       int64
+	DataSelectMinTime       int64
+	SplitInterval           time.Duration
+	m                       sync.Mutex
 }
 
 // ContextWithEmptyStats returns a context with empty stats.
@@ -91,6 +92,22 @@ func (s *QueryStats) LoadResponseSeries() uint64 {
 	}
 
 	return atomic.LoadUint64(&s.QueryResponseSeries)
+}
+
+func (s *QueryStats) AddAggregatedResponseBytes(bytes uint64) {
+	if s == nil {
+		return
+	}
+
+	atomic.AddUint64(&s.AggregatedResponseBytes, bytes)
+}
+
+func (s *QueryStats) LoadAggregatedResponseBytes() uint64 {
+	if s == nil {
+		return 0
+	}
+
+	return atomic.LoadUint64(&s.AggregatedResponseBytes)
 }
 
 func (s *QueryStats) AddFetchedSeries(series uint64) {

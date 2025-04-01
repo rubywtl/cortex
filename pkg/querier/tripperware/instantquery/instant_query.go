@@ -138,6 +138,9 @@ func (c instantQueryCodec) DecodeResponse(ctx context.Context, r *http.Response,
 		return nil, httpgrpc.Errorf(r.StatusCode, "%s", string(body))
 	}
 
+	query_stats := stats.FromContext(ctx)
+	query_stats.AddAggregatedResponseBytes(uint64(len(body)))
+
 	var resp tripperware.PrometheusResponse
 	err = tripperware.UnmarshalResponse(r, body, &resp)
 

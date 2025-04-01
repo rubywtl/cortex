@@ -432,6 +432,7 @@ func (f *Handler) reportQueryStats(r *http.Request, source, userID string, query
 	wallTime := stats.LoadWallTime()
 	queryStorageWallTime := stats.LoadQueryStorageWallTime()
 	numResponseSeries := stats.LoadResponseSeries()
+	numAggregatedResponseBytes := stats.LoadAggregatedResponseBytes()
 	numFetchedSeries := stats.LoadFetchedSeries()
 	numFetchedChunks := stats.LoadFetchedChunks()
 	numFetchedSamples := stats.LoadFetchedSamples()
@@ -474,6 +475,7 @@ func (f *Handler) reportQueryStats(r *http.Request, source, userID string, query
 		"response_time", queryResponseTime,
 		"query_wall_time_seconds", wallTime.Seconds(),
 		"response_series_count", numResponseSeries,
+		"response_aggregated_bytes", numAggregatedResponseBytes,
 		"fetched_series_count", numFetchedSeries,
 		"fetched_chunks_count", numFetchedChunks,
 		"fetched_samples_count", numFetchedSamples,
