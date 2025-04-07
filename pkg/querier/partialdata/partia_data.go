@@ -6,7 +6,7 @@ import (
 
 type IsCfgEnabledFunc func(userID string) bool
 
-var ErrPartialData = errors.New("query result may contain partial data")
+var ErrPartialData = errors.New("Please retry later, the query may not have processed all recently ingested time series") //nolint:staticcheck
 
 func IsPartialDataError(err error) bool {
 	return errors.Is(err, ErrPartialData)
