@@ -91,7 +91,7 @@ func TestClosableHealthAndIngesterClient_MaxInflightPushRequests(t *testing.T) {
 			}
 
 			client2 := createTestIngesterClient(tData.maxInflightPushRequests, tData.inflightPushRequests)
-			_, err = client2.PushPreAlloc(ctx, nil)
+			_, err = client2.Push(ctx, nil)
 			if tData.expectThrottle {
 				assert.ErrorIs(t, err, errTooManyInflightPushRequests)
 			} else {

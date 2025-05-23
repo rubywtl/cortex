@@ -1182,26 +1182,16 @@ func (d *Distributor) send(ctx context.Context, ingester ring.InstanceDesc, time
 	d.inflightClientRequests.Inc()
 	defer d.inflightClientRequests.Dec()
 
+	req := &cortexpb.WriteRequest{
+		Timeseries: timeseries,
+		Metadata:   metadata,
+		Source:     source,
+	}
+
 	if d.cfg.UseStreamPush {
-		req := &cortexpb.WriteRequest{
-			Timeseries: timeseries,
-			Metadata:   metadata,
-			Source:     source,
-		}
 		_, err = c.PushStreamConnection(ctx, req)
 	} else {
-		req := cortexpb.PreallocWriteRequestFromPool()
-		req.Timeseries = timeseries
-		req.Metadata = metadata
-		req.Source = source
-
-		_, err = c.PushPreAlloc(ctx, req)
-
-		// We should not reuse the req in case of errors:
-		// See: https://github.com/grpc/grpc-go/issues/6355
-		if err == nil {
-			cortexpb.ReuseWriteRequest(req)
-		}
+		_, err = c.Push(ctx, req)
 	}
 
 	if len(metadata) > 0 {
