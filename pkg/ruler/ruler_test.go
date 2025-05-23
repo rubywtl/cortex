@@ -86,14 +86,14 @@ func defaultRulerConfig(t testing.TB) Config {
 }
 
 type ruleLimits struct {
-	mtx                  sync.RWMutex
-	tenantShard          float64
-	maxRulesPerRuleGroup int
-	maxRuleGroups        int
-	disabledRuleGroups   validation.DisabledRuleGroups
-	maxQueryLength       time.Duration
-	queryOffset          time.Duration
-	externalLabels       labels.Labels
+	mtx                       sync.RWMutex
+	tenantShard               float64
+	maxRulesPerRuleGroup      int
+	maxRuleGroups             int
+	disabledRuleGroups        validation.DisabledRuleGroups
+	maxQueryLength            time.Duration
+	queryOffset               time.Duration
+	externalLabels            labels.Labels
 	s3SseKmsKeyId             string
 	kmsEncryptionWorkspaceKey string
 }
@@ -134,11 +134,11 @@ func (r *ruleLimits) MaxQueryLength(_ string) time.Duration {
 	return r.maxQueryLength
 }
 
-func (r ruleLimits) S3SSEKMSKeyID(_ string) string {
+func (r *ruleLimits) S3SSEKMSKeyID(_ string) string {
 	return r.s3SseKmsKeyId
 }
 
-func (r ruleLimits) KMSEncryptionWorkspaceKey(_ string) string {
+func (r *ruleLimits) KMSEncryptionWorkspaceKey(_ string) string {
 	return r.kmsEncryptionWorkspaceKey
 }
 
@@ -276,7 +276,7 @@ func newManager(t *testing.T, cfg Config) *DefaultMultiTenantManager {
 	engine, queryable, pusher, logger, overrides, reg := testSetup(t, nil)
 	metrics := NewRuleEvalMetrics(cfg, nil)
 	managerFactory := DefaultTenantManagerFactory(cfg, pusher, queryable, engine, overrides, metrics, nil)
-	manager, err := NewDefaultMultiTenantManager(cfg, overrides, managerFactory, metrics, reg, logger)
+	manager, err := NewDefaultMultiTenantManager(cfg, overrides, managerFactory, metrics, reg, logger, nil)
 	require.NoError(t, err)
 
 	return manager
@@ -342,7 +342,7 @@ func buildRuler(t *testing.T, rulerConfig Config, querierTestConfig *querier.Tes
 	engine, queryable, pusher, logger, overrides, reg := testSetup(t, querierTestConfig)
 	metrics := NewRuleEvalMetrics(rulerConfig, reg)
 	managerFactory := DefaultTenantManagerFactory(rulerConfig, pusher, queryable, engine, overrides, metrics, reg)
-	manager, err := NewDefaultMultiTenantManager(rulerConfig, &ruleLimits{}, managerFactory, metrics, reg, log.NewNopLogger())
+	manager, err := NewDefaultMultiTenantManager(rulerConfig, &ruleLimits{}, managerFactory, metrics, reg, log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	ruler, err := newRuler(
@@ -362,7 +362,7 @@ func buildRulerWithIterFunc(t *testing.T, rulerConfig Config, querierTestConfig 
 	engine, queryable, pusher, logger, overrides, reg := testSetup(t, querierTestConfig)
 	metrics := NewRuleEvalMetrics(rulerConfig, reg)
 	managerFactory := DefaultTenantManagerFactory(rulerConfig, pusher, queryable, engine, overrides, metrics, reg)
-	manager, err := NewDefaultMultiTenantManagerWithIterationFunc(ruleGroupIterFunc, rulerConfig, &ruleLimits{}, managerFactory, metrics, reg, log.NewNopLogger())
+	manager, err := NewDefaultMultiTenantManagerWithIterationFunc(ruleGroupIterFunc, rulerConfig, &ruleLimits{}, managerFactory, metrics, reg, log.NewNopLogger(), store)
 	require.NoError(t, err)
 
 	ruler, err := newRuler(
@@ -473,7 +473,7 @@ func TestNotifierSendExternalLabels(t *testing.T) {
 	engine, queryable, pusher, logger, _, reg := testSetup(t, nil)
 	metrics := NewRuleEvalMetrics(cfg, nil)
 	managerFactory := DefaultTenantManagerFactory(cfg, pusher, queryable, engine, limits, metrics, nil)
-	manager, err := NewDefaultMultiTenantManager(cfg, limits, managerFactory, metrics, reg, logger)
+	manager, err := NewDefaultMultiTenantManager(cfg, limits, managerFactory, metrics, reg, logger, nil)
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
 

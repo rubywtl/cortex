@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	promRules "github.com/prometheus/prometheus/rules"
+
 	"github.com/cortexproject/cortex/pkg/ruler/rulespb"
 )
 
@@ -16,6 +18,8 @@ var (
 	ErrGroupNamespaceNotFound = errors.New("group namespace does not exist")
 	// ErrUserNotFound is returned if the user does not currently exist
 	ErrUserNotFound = errors.New("no rule groups found for user")
+	// ErrAlertStateNotFound is returned if the alert state does not currently exist for the rule
+	ErrAlertStateNotFound = errors.New("no alert state found for rule")
 )
 
 // RuleStore is used to store and retrieve rules.
@@ -47,4 +51,9 @@ type RuleStore interface {
 	// DeleteNamespace lists rule groups for given user and namespace, and deletes all rule groups.
 	// If namespace is empty, deletes all rule groups for user.
 	DeleteNamespace(ctx context.Context, userID, namespace string) error
+
+	// GetAlertRuleState returs all stored alerts for an alerting rule.
+	GetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64) ([]*promRules.Alert, error)
+	// SetAlertRuleState stores alerts state for an alerting rule.
+	SetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64, state []*promRules.Alert) error
 }

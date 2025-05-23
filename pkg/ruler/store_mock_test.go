@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	promRules "github.com/prometheus/prometheus/rules"
+
 	"github.com/cortexproject/cortex/pkg/ruler/rulespb"
 	"github.com/cortexproject/cortex/pkg/ruler/rulestore"
 )
@@ -359,5 +361,13 @@ func (m *mockRuleStore) DeleteNamespace(ctx context.Context, userID, namespace s
 		}
 	}
 
+	return nil
+}
+
+func (m *mockRuleStore) GetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64) ([]*promRules.Alert, error) {
+	return nil, nil
+}
+
+func (m *mockRuleStore) SetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64, state []*promRules.Alert) error {
 	return nil
 }

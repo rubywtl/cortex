@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
+	promRules "github.com/prometheus/prometheus/rules"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
 
@@ -25,6 +28,9 @@ import (
 const (
 	// The bucket prefix under which all tenants rule groups are stored.
 	rulesPrefix = "rules"
+
+	// The bucket prefix under which alert state is stored.
+	alertStatesPrefix = "alertStates"
 
 	loadConcurrency = 10
 )
@@ -47,6 +53,14 @@ type BucketRuleStore struct {
 func NewBucketRuleStore(bkt objstore.Bucket, cfgProvider bucket.TenantConfigProvider, logger log.Logger) *BucketRuleStore {
 	return &BucketRuleStore{
 		bucket:      bucket.NewPrefixedBucketClient(bkt, rulesPrefix),
+		cfgProvider: cfgProvider,
+		logger:      logger,
+	}
+}
+
+func NewBucketAlertsStore(bkt objstore.Bucket, cfgProvider bucket.TenantConfigProvider, logger log.Logger) *BucketRuleStore {
+	return &BucketRuleStore{
+		bucket:      bucket.NewPrefixedBucketClient(bkt, alertStatesPrefix),
 		cfgProvider: cfgProvider,
 		logger:      logger,
 	}
@@ -293,12 +307,59 @@ func (b *BucketRuleStore) DeleteNamespace(ctx context.Context, userID string, na
 	return nil
 }
 
+func (b *BucketRuleStore) GetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64) ([]*promRules.Alert, error) {
+	userBucket := bucket.NewUserBucketClient(userID, b.bucket, b.cfgProvider)
+	objectKey := getAlertStateObjectKey(namespace, group, ruleKey)
+
+	reader, err := userBucket.Get(ctx, objectKey)
+	if userBucket.IsObjNotFoundErr(err) {
+		level.Debug(b.logger).Log("msg", "alert state does not exist", "user", userID, "key", objectKey)
+		return nil, rulestore.ErrAlertStateNotFound
+	}
+
+	if userBucket.IsAccessDeniedErr(err) {
+		level.Debug(b.logger).Log("msg", "permission denied when loading alert state", "user", userID, "key", objectKey)
+		return nil, rulestore.ErrAccessDenied
+	}
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get alert state %s", objectKey)
+	}
+	defer func() { _ = reader.Close() }()
+
+	buf, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read alert state %s", objectKey)
+	}
+	var alerts []*promRules.Alert
+	err = json.Unmarshal(buf, &alerts)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal alerts %s", objectKey)
+	}
+
+	return alerts, nil
+}
+
+func (b *BucketRuleStore) SetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64, state []*promRules.Alert) error {
+	userBucket := bucket.NewUserBucketClient(userID, b.bucket, b.cfgProvider)
+	objectKey := getAlertStateObjectKey(namespace, group, ruleKey)
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return userBucket.Upload(ctx, objectKey, bytes.NewReader(data))
+}
+
 func getNamespacePrefix(namespace string) string {
 	return base64.URLEncoding.EncodeToString([]byte(namespace)) + objstore.DirDelim
 }
 
 func getRuleGroupObjectKey(namespace, group string) string {
 	return getNamespacePrefix(namespace) + base64.URLEncoding.EncodeToString([]byte(group))
+}
+
+func getAlertStateObjectKey(namespace, group string, ruleKey uint64) string {
+	return getRuleGroupObjectKey(namespace, group) + objstore.DirDelim + strconv.FormatUint(ruleKey, 10)
 }
 
 // parseRuleGroupObjectKeyWithUser parses a bucket object key in the format "<user>/<namespace>/<rules group>".

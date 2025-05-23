@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	promRules "github.com/prometheus/prometheus/rules"
+
 	"github.com/cortexproject/cortex/pkg/configs/client"
 	"github.com/cortexproject/cortex/pkg/configs/userconfig"
 	"github.com/cortexproject/cortex/pkg/ruler/rulespb"
@@ -132,5 +134,13 @@ func (c *ConfigRuleStore) DeleteRuleGroup(ctx context.Context, userID, namespace
 
 // DeleteNamespace is not implemented
 func (c *ConfigRuleStore) DeleteNamespace(ctx context.Context, userID, namespace string) error {
+	return errors.New("not implemented by the config service rule store")
+}
+
+func (c *ConfigRuleStore) GetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64) ([]*promRules.Alert, error) {
+	return nil, errors.New("not implemented by the config service rule store")
+}
+
+func (c *ConfigRuleStore) SetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64, state []*promRules.Alert) error {
 	return errors.New("not implemented by the config service rule store")
 }

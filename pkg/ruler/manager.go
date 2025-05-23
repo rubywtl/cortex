@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	ot "github.com/opentracing/opentracing-go"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/cortexproject/cortex/pkg/ring/client"
 	"github.com/cortexproject/cortex/pkg/ruler/rulespb"
+	"github.com/cortexproject/cortex/pkg/ruler/rulestore"
 )
 
 type DefaultMultiTenantManager struct {
@@ -66,9 +68,11 @@ type DefaultMultiTenantManager struct {
 	syncRuleMtx  sync.Mutex
 
 	ruleGroupIterationFunc promRules.GroupEvalIterationFunc
+	store                  rulestore.RuleStore
+	alertStoreFailures     *prometheus.CounterVec
 }
 
-func NewDefaultMultiTenantManager(cfg Config, limits RulesLimits, managerFactory ManagerFactory, evalMetrics *RuleEvalMetrics, reg prometheus.Registerer, logger log.Logger) (*DefaultMultiTenantManager, error) {
+func NewDefaultMultiTenantManager(cfg Config, limits RulesLimits, managerFactory ManagerFactory, evalMetrics *RuleEvalMetrics, reg prometheus.Registerer, logger log.Logger, store rulestore.RuleStore) (*DefaultMultiTenantManager, error) {
 	ncfg, err := buildNotifierConfig(&cfg)
 	if err != nil {
 		return nil, err
@@ -126,7 +130,15 @@ func NewDefaultMultiTenantManager(cfg Config, limits RulesLimits, managerFactory
 		}, []string{"user"}),
 		registry:               reg,
 		logger:                 logger,
-		ruleGroupIterationFunc: defaultRuleGroupIterationFunc,
+		ruleGroupIterationFunc: nil,
+		store:                  store,
+	}
+	if cfg.EnableAlertStorage {
+		m.alertStoreFailures = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Namespace: "cortex",
+			Name:      "ruler_alert_store_failures_total",
+			Help:      "Total number of failures in alert store",
+		}, []string{"user"})
 	}
 	if cfg.RulesBackupEnabled() {
 		m.rulesBackupManager = newRulesBackupManager(cfg, logger, reg)
@@ -134,8 +146,8 @@ func NewDefaultMultiTenantManager(cfg Config, limits RulesLimits, managerFactory
 	return m, nil
 }
 
-func NewDefaultMultiTenantManagerWithIterationFunc(iterFunc promRules.GroupEvalIterationFunc, cfg Config, limits RulesLimits, managerFactory ManagerFactory, evalMetrics *RuleEvalMetrics, reg prometheus.Registerer, logger log.Logger) (*DefaultMultiTenantManager, error) {
-	manager, err := NewDefaultMultiTenantManager(cfg, limits, managerFactory, evalMetrics, reg, logger)
+func NewDefaultMultiTenantManagerWithIterationFunc(iterFunc promRules.GroupEvalIterationFunc, cfg Config, limits RulesLimits, managerFactory ManagerFactory, evalMetrics *RuleEvalMetrics, reg prometheus.Registerer, logger log.Logger, store rulestore.RuleStore) (*DefaultMultiTenantManager, error) {
+	manager, err := NewDefaultMultiTenantManager(cfg, limits, managerFactory, evalMetrics, reg, logger, store)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +182,9 @@ func (r *DefaultMultiTenantManager) SyncRuleGroups(ctx context.Context, ruleGrou
 			r.userManagerMetrics.RemoveUserRegistry(userID)
 			if r.ruleEvalMetrics != nil {
 				r.ruleEvalMetrics.deletePerUserMetrics(userID)
+			}
+			if r.cfg.EnableAlertStorage {
+				r.alertStoreFailures.DeleteLabelValues(userID)
 			}
 			level.Info(r.logger).Log("msg", "deleted rule manager and local rule files", "user", userID)
 		}
@@ -226,7 +241,7 @@ func (r *DefaultMultiTenantManager) syncRulesToManager(ctx context.Context, user
 		if (rulesUpdated || externalLabelsUpdated) && existing {
 			r.updateRuleCache(user, manager.RuleGroups())
 		}
-		err = manager.Update(r.cfg.EvaluationInterval, files, externalLabels, r.cfg.ExternalURL.String(), r.ruleGroupIterationFunc)
+		err = manager.Update(r.cfg.EvaluationInterval, files, externalLabels, r.cfg.ExternalURL.String(), r.rgIterationFunc(user))
 		r.deleteRuleCache(user)
 		if err != nil {
 			r.lastReloadSuccessful.WithLabelValues(user).Set(0)
@@ -269,19 +284,30 @@ func (r *DefaultMultiTenantManager) createRulesManager(user string, ctx context.
 	return manager
 }
 
-func defaultRuleGroupIterationFunc(ctx context.Context, g *promRules.Group, evalTimestamp time.Time) {
-	logMessage := []interface{}{
-		"component", "ruler",
-		"rule_group", g.Name(),
-		"namespace", g.File(),
-		"num_rules", len(g.Rules()),
-		"num_alert_rules", len(g.AlertingRules()),
-		"eval_interval", g.Interval(),
-		"eval_time", evalTimestamp,
-	}
+func (r *DefaultMultiTenantManager) rgIterationFunc(user string) func(ctx context.Context, g *promRules.Group, evalTimestamp time.Time) {
+	return func(ctx context.Context, g *promRules.Group, evalTimestamp time.Time) {
+		if r.cfg.EnableAlertStorage && g.GetLastEvalTimestamp().IsZero() {
+			// restore alerts from storage during first group evaluation
+			r.loadAlertState(ctx, user, g)
+		}
 
-	g.Logger().Info("evaluating rule group", logMessage...)
-	promRules.DefaultEvalIterationFunc(ctx, g, evalTimestamp)
+		logMessage := []interface{}{
+			"component", "ruler",
+			"rule_group", g.Name(),
+			"namespace", g.File(),
+			"num_rules", len(g.Rules()),
+			"num_alert_rules", len(g.AlertingRules()),
+			"eval_interval", g.Interval(),
+			"eval_time", evalTimestamp,
+		}
+
+		g.Logger().Info("evaluating rule group", logMessage...)
+		promRules.DefaultEvalIterationFunc(ctx, g, evalTimestamp)
+
+		if r.cfg.EnableAlertStorage {
+			r.setAlertState(ctx, user, g)
+		}
+	}
 }
 
 // newManager creates a prometheus rule manager wrapped with a user id
@@ -474,4 +500,45 @@ func (*DefaultMultiTenantManager) ValidateRuleGroup(g rulefmt.RuleGroup) []error
 	}
 
 	return errs
+}
+
+func (r *DefaultMultiTenantManager) loadAlertState(ctx context.Context, user string, g *promRules.Group) {
+	for _, rule := range g.Rules() {
+		ar, ok := rule.(*promRules.AlertingRule)
+		if !ok || ar.KeepFiringFor() == 0 {
+			continue
+		}
+		ruleKey := xxhash.Sum64([]byte(ar.String()))
+		alertsFromStore, err := r.store.GetAlertRuleState(ctx, user, g.File(), g.Name(), ruleKey)
+		if err != nil {
+			if !errors.Is(err, rulestore.ErrAlertStateNotFound) {
+				r.alertStoreFailures.WithLabelValues(user).Inc()
+				level.Error(r.logger).Log("msg", "Failed to retrieve alerts state", "group", g.Name(), "rule", ar.Name(), "error", err)
+			}
+			continue
+		}
+		activeAlerts := make(map[uint64]*promRules.Alert)
+		for _, alert := range alertsFromStore {
+			activeAlerts[alert.Labels.Hash()] = alert
+		}
+		// Set active alerts in Prometheus Alerting Rule
+		ar.SetActiveAlerts(activeAlerts)
+	}
+}
+
+func (r *DefaultMultiTenantManager) setAlertState(ctx context.Context, user string, g *promRules.Group) {
+	for _, rule := range g.Rules() {
+		if ar, ok := rule.(*promRules.AlertingRule); ok {
+			if ar.KeepFiringFor() > 0 {
+				ruleKey := xxhash.Sum64([]byte(ar.String()))
+				err := r.store.SetAlertRuleState(ctx, user, g.File(), g.Name(), ruleKey, ar.ActiveAlerts())
+				if err != nil {
+					r.alertStoreFailures.WithLabelValues(user).Inc()
+					level.Error(r.logger).Log("msg", "Failed to store alerts state", "namespace", g.File(), "group", g.Name(), "rule", ar.Name(), "error", err)
+				} else if len(ar.ActiveAlerts()) > 0 {
+					level.Info(r.logger).Log("msg", "Stored alerts state for rule", "namespace", g.File(), "group", g.Name(), "rule", ar.Name(), "alerts", len(ar.ActiveAlerts()))
+				}
+			}
+		}
+	}
 }

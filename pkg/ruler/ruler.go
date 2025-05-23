@@ -176,6 +176,8 @@ type Config struct {
 	DisableRuleGroupLabel bool                                                      `yaml:"disable_rule_group_label"`
 	ReportStats           func(ctx context.Context, qs stats.QueryStats, err error) `yaml:"-"`
 
+	EnableAlertStorage bool `yaml:"enable_alert_storage"`
+
 	EnableHAEvaluation   bool          `yaml:"enable_ha_evaluation"`
 	LivenessCheckTimeout time.Duration `yaml:"liveness_check_timeout"`
 
@@ -265,6 +267,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 
 	f.BoolVar(&cfg.EnableQueryStats, "ruler.query-stats-enabled", false, "Report query statistics for ruler queries to complete as a per user metric and as an info level log message.")
 	f.BoolVar(&cfg.DisableRuleGroupLabel, "ruler.disable-rule-group-label", false, "Disable the rule_group label on exported metrics")
+	f.BoolVar(&cfg.EnableAlertStorage, "experimental.ruler.alert-storage-enabled", false, "EXPERIMENTAL: Store state for alerts using keep_firing_for to persistent storage.")
 
 	f.BoolVar(&cfg.EnableHAEvaluation, "ruler.enable-ha-evaluation", false, "Enable high availability")
 	f.DurationVar(&cfg.LivenessCheckTimeout, "ruler.liveness-check-timeout", 1*time.Second, "Timeout duration for non-primary rulers during liveness checks. If the check times out, the non-primary ruler will evaluate the rule group. Applicable when ruler.enable-ha-evaluation is true.")

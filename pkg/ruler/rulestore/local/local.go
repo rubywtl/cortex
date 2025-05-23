@@ -184,3 +184,10 @@ func (l *Client) loadAllRulesGroupsForUserAndNamespace(_ context.Context, userID
 
 	return list, nil
 }
+
+func (l *Client) GetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64) ([]*promRules.Alert, error) {
+	return nil, errors.New("GetAlertRuleState unsupported in rule local store")
+}
+func (l *Client) SetAlertRuleState(ctx context.Context, userID, namespace, group string, ruleKey uint64, state []*promRules.Alert) error {
+	return errors.New("SetAlertRuleState unsupported in rule local store")
+}

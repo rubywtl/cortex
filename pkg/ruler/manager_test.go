@@ -31,7 +31,7 @@ func TestSyncRuleGroups(t *testing.T) {
 	ruleManagerFactory := RuleManagerFactory(nil, waitDurations)
 	limits := &ruleLimits{externalLabels: labels.FromStrings("from", "cortex")}
 
-	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, limits, ruleManagerFactory, nil, nil, log.NewNopLogger())
+	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, limits, ruleManagerFactory, nil, nil, log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	const user = "testUser"
@@ -160,7 +160,7 @@ func TestSlowRuleGroupSyncDoesNotSlowdownListRules(t *testing.T) {
 	}
 
 	ruleManagerFactory := RuleManagerFactory(groupsToReturn, waitDurations)
-	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, &ruleLimits{}, ruleManagerFactory, nil, prometheus.NewRegistry(), log.NewNopLogger())
+	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, &ruleLimits{}, ruleManagerFactory, nil, prometheus.NewRegistry(), log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	m.SyncRuleGroups(context.Background(), userRules)
@@ -223,7 +223,7 @@ func TestSyncRuleGroupsCleanUpPerUserMetrics(t *testing.T) {
 
 	ruleManagerFactory := RuleManagerFactory(nil, waitDurations)
 
-	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, &ruleLimits{}, ruleManagerFactory, evalMetrics, reg, log.NewNopLogger())
+	m, err := NewDefaultMultiTenantManager(Config{RulePath: dir}, &ruleLimits{}, ruleManagerFactory, evalMetrics, reg, log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	const user = "testUser"
@@ -271,7 +271,7 @@ func TestBackupRules(t *testing.T) {
 	ruleManagerFactory := RuleManagerFactory(nil, waitDurations)
 	config := Config{RulePath: dir}
 	config.Ring.ReplicationFactor = 3
-	m, err := NewDefaultMultiTenantManager(config, &ruleLimits{}, ruleManagerFactory, evalMetrics, reg, log.NewNopLogger())
+	m, err := NewDefaultMultiTenantManager(config, &ruleLimits{}, ruleManagerFactory, evalMetrics, reg, log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	const user1 = "testUser"

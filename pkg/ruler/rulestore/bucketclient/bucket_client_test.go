@@ -8,10 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/rulefmt"
+	promRules "github.com/prometheus/prometheus/rules"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
@@ -434,6 +437,104 @@ func TestListAllRuleGroupsWithNoNamespaceOrGroup(t *testing.T) {
 	require.Equal(t, 1, len(out))                    // one user
 	require.Equal(t, 1, len(out["user3"]))           // one group
 	require.Equal(t, "group1", out["user3"][0].Name) // one group
+}
+
+type testAlert struct {
+	user, namespace, group, rule string
+	alerts                       []*promRules.Alert
+}
+
+func TestGetAlertRuleState(t *testing.T) {
+	alert1 := &promRules.Alert{
+		State: 2,
+		Labels: []labels.Label{
+			{Name: "test1", Value: "value1"},
+		},
+		Annotations: []labels.Label{
+			{Name: "test-annotation", Value: "us-east-1"},
+		},
+		Value: 1,
+	}
+	alert2 := &promRules.Alert{
+		State: 2,
+		Labels: []labels.Label{
+			{Name: "alert2", Value: "value1"},
+		},
+		Annotations: []labels.Label{
+			{Name: "test-alert2", Value: "us-east-1"},
+		},
+		Value: 100,
+	}
+	testAlerts := []testAlert{
+		{user: "user1", namespace: "hello", group: "group1", rule: "ar1", alerts: []*promRules.Alert{alert1}},
+		{user: "user1", namespace: "hello", group: "group1", rule: "ar2", alerts: []*promRules.Alert{alert2}},
+		{user: "user1", namespace: "hello", group: "group2", rule: "ar3", alerts: []*promRules.Alert{alert1, alert2}},
+		{user: "user2", namespace: "test", group: "group1", rule: "ar3", alerts: []*promRules.Alert{}},
+	}
+
+	bucketClient := objstore.NewInMemBucket()
+	rs := NewBucketAlertsStore(bucketClient, nil, log.NewNopLogger())
+	for _, testAlert := range testAlerts {
+		require.NoError(t, rs.SetAlertRuleState(context.Background(), testAlert.user, testAlert.namespace, testAlert.group, xxhash.Sum64([]byte(testAlert.rule)), testAlert.alerts))
+	}
+
+	tests := map[string]struct {
+		user           string
+		namespace      string
+		group          string
+		rule           string
+		expectedAlerts []*promRules.Alert
+		expectedErr    bool
+	}{
+		"user1 rule1 alerts": {
+			user:           "user1",
+			namespace:      "hello",
+			group:          "group1",
+			rule:           "ar1",
+			expectedAlerts: []*promRules.Alert{alert1},
+		},
+		"user1 rule2 alerts": {
+			user:           "user1",
+			namespace:      "hello",
+			group:          "group1",
+			rule:           "ar2",
+			expectedAlerts: []*promRules.Alert{alert2},
+		},
+		"user1 - multiple alerts for a rule": {
+			user:           "user1",
+			namespace:      "hello",
+			group:          "group2",
+			rule:           "ar3",
+			expectedAlerts: []*promRules.Alert{alert1, alert2},
+		},
+		"user2 rule - empty alerts": {
+			user:           "user2",
+			namespace:      "test",
+			group:          "group1",
+			rule:           "ar3",
+			expectedAlerts: []*promRules.Alert{},
+		},
+		"user3 - no state": {
+			user:           "user3",
+			namespace:      "invalid",
+			group:          "group1",
+			rule:           "ar3",
+			expectedAlerts: nil,
+			expectedErr:    true,
+		},
+	}
+
+	for testName, testData := range tests {
+		t.Run(testName, func(t *testing.T) {
+			alerts, err := rs.GetAlertRuleState(context.Background(), testData.user, testData.namespace, testData.group, xxhash.Sum64([]byte(testData.rule)))
+			if testData.expectedErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testData.expectedAlerts, alerts)
+			}
+		})
+	}
 }
 
 type mockBucket struct {

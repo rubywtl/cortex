@@ -74,7 +74,7 @@ func Test_cmkHooks(t *testing.T) {
 		}
 
 		r, _ := buildRuler(t, cfg, nil, store, nil)
-		r.limits = ruleLimits{tenantShard: 1}
+		r.limits = &ruleLimits{tenantShard: 1}
 
 		if forceRing != nil {
 			r.ring = forceRing
@@ -145,7 +145,7 @@ func buildRulerWithLimits(t *testing.T, rulerConfig Config, querierTestConfig *q
 
 	metrics := NewRuleEvalMetrics(rulerConfig, nil)
 	managerFactory := DefaultTenantManagerFactory(rulerConfig, pusher, queryable, engine, limits, metrics, reg)
-	manager, err := NewDefaultMultiTenantManager(rulerConfig, managerFactory, metrics, reg, log.NewNopLogger())
+	manager, err := NewDefaultMultiTenantManager(rulerConfig, limits, managerFactory, metrics, reg, log.NewNopLogger(), nil)
 	require.NoError(t, err)
 
 	ruler, err := newRuler(
@@ -234,7 +234,7 @@ func Test_cmkAllowedTenants(t *testing.T) {
 					FlushCheckPeriod: 0,
 					DisabledTenants:  tc.disabledTenants,
 				}
-				limits := ruleLimits{tenantShard: 3, s3SseKmsKeyId: tc.s3KmsKeyId, kmsEncryptionWorkspaceKey: tc.kmsEncryptionWorkspaceKey}
+				limits := &ruleLimits{tenantShard: 3, s3SseKmsKeyId: tc.s3KmsKeyId, kmsEncryptionWorkspaceKey: tc.kmsEncryptionWorkspaceKey}
 				r, _ := buildRulerWithLimits(t, cfg, nil, store, nil, limits)
 
 				// Simulates scenario where tenant is previously disabled due to CMK propagation delay
