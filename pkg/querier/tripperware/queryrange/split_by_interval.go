@@ -154,9 +154,36 @@ func nextIntervalBoundary(t, step int64, interval time.Duration) int64 {
 
 // Returns a fixed split interval
 func staticIntervalFn(cfg Config) func(ctx context.Context, r tripperware.Request) (context.Context, time.Duration, error) {
-	return func(ctx context.Context, _ tripperware.Request) (context.Context, time.Duration, error) {
+	return func(ctx context.Context, r tripperware.Request) (context.Context, time.Duration, error) {
+		totalRange, err := getTotalRangeFromRequest(r)
+		if err != nil {
+			return ctx, cfg.SplitQueriesByInterval, err
+		}
+		// Hardcode 7 day here, assuming SplitQueriesByInterval is configured as 1 day.
+		if totalRange > 7*cfg.SplitQueriesByInterval {
+			return ctx, 7 * cfg.SplitQueriesByInterval, nil
+		}
 		return ctx, cfg.SplitQueriesByInterval, nil
 	}
+}
+
+// getTotalRangeFromRequest gets MatrixSelector and SubqueryExpr range sum from the query.
+func getTotalRangeFromRequest(r tripperware.Request) (time.Duration, error) {
+	expr, err := parser.ParseExpr(r.GetQuery())
+	if err != nil {
+		return 0, err
+	}
+	totalRange := time.Duration(0)
+	parser.Inspect(expr, func(node parser.Node, path []parser.Node) error {
+		switch n := node.(type) {
+		case *parser.MatrixSelector:
+			totalRange += n.Range
+		case *parser.SubqueryExpr:
+			totalRange += n.Range
+		}
+		return nil
+	})
+	return totalRange, nil
 }
 
 // Returns a dynamic multiple of base interval adjusted depending on configured 'max_shards_per_query' and 'max_fetched_data_duration_per_query'
