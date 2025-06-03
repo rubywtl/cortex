@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/util/stats"
 	thanosengine "github.com/thanos-io/promql-engine/engine"
 	"github.com/thanos-io/promql-engine/logicalplan"
 )
@@ -179,6 +180,13 @@ func (qf *Engine) MakeRangeQueryFromPlan(ctx context.Context, q storage.Queryabl
 
 prom:
 	return qf.prometheusEngine.NewRangeQuery(ctx, q, opts, qs, start, end, interval)
+}
+
+func (qf *Engine) SetReportStats(rs func(ctx context.Context, qs stats.QueryStats, err error)) {
+	if qf.thanosEngine != nil {
+		qf.thanosEngine.SetReportStats(rs)
+	}
+	qf.prometheusEngine.SetReportStats(rs)
 }
 
 func fromPromQLOpts(opts promql.QueryOpts) *thanosengine.QueryOpts {

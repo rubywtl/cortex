@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/notifier"
 	"github.com/prometheus/prometheus/promql/parser"
 	promRules "github.com/prometheus/prometheus/rules"
+	"github.com/prometheus/prometheus/util/stats"
 	"github.com/prometheus/prometheus/util/strutil"
 	"github.com/weaveworks/common/user"
 	"golang.org/x/sync/errgroup"
@@ -169,8 +170,9 @@ type Config struct {
 	LookbackDelta        time.Duration `yaml:"-"`
 	PrometheusHTTPPrefix string        `yaml:"-"`
 
-	EnableQueryStats      bool `yaml:"query_stats_enabled"`
-	DisableRuleGroupLabel bool `yaml:"disable_rule_group_label"`
+	EnableQueryStats      bool                                                      `yaml:"query_stats_enabled"`
+	DisableRuleGroupLabel bool                                                      `yaml:"disable_rule_group_label"`
+	ReportStats           func(ctx context.Context, qs stats.QueryStats, err error) `yaml:"-"`
 
 	EnableHAEvaluation   bool          `yaml:"enable_ha_evaluation"`
 	LivenessCheckTimeout time.Duration `yaml:"liveness_check_timeout"`
