@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
-
 	"net/http"
 	"net/url"
 	"path"
@@ -14,13 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/alertmanager/api/v2/models"
-
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/alertmanager/alertobserver"
 	"github.com/prometheus/alertmanager/api"
+	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/cluster/clusterpb"
 	"github.com/prometheus/alertmanager/config"
@@ -46,6 +44,8 @@ import (
 	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/alertmanager/notify/wechat"
 	"github.com/prometheus/alertmanager/provider/mem"
+	"github.com/prometheus/alertmanager/secrets"
+	"github.com/prometheus/alertmanager/secrets/providers"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/timeinterval"
@@ -133,6 +133,8 @@ type Alertmanager struct {
 	rateLimitedNotifications *prometheus.CounterVec
 
 	alertLCObserver alertobserver.LifeCycleObserver
+
+	secretsProviderRegistry *secrets.SecretsProviderRegistry
 }
 
 var (
@@ -385,6 +387,15 @@ func (am *Alertmanager) ApplyConfig(userID string, conf *config.Config, rawCfg s
 		am.dispatcher.Stop()
 	}
 
+	if am.secretsProviderRegistry == nil {
+		am.secretsProviderRegistry = secrets.NewSecretsProviderRegistry(util_log.GoKitLogToSlog(log.With(am.logger, "component", "secrets_provider")), am.registry)
+		// currently only one secrets provider is supported
+		am.secretsProviderRegistry.Register(providers.AMPAWSSecretsManagerSecretProviderDiscoveryConfig{ //nolint:errcheck
+			UserID: userID,
+		})
+		am.secretsProviderRegistry.Init() //initialize the registry
+	}
+
 	am.inhibitor = inhibit.NewInhibitor(am.alerts, conf.InhibitRules, am.alertMarker, util_log.GoKitLogToSlog(log.With(am.logger, "component", "inhibitor")))
 
 	waitFunc := clusterWait(am.state.Position, am.cfg.PeerTimeout)
@@ -399,7 +410,7 @@ func (am *Alertmanager) ApplyConfig(userID string, conf *config.Config, rawCfg s
 	// Create a firewall binded to the per-tenant config.
 	firewallDialer := util_net.NewFirewallDialer(newFirewallDialerConfigProvider(userID, am.cfg.Limits))
 
-	integrationsMap, err := buildIntegrationsMap(conf.Receivers, tmpl, firewallDialer, am.logger, func(integrationName string, notifier notify.Notifier) notify.Notifier {
+	integrationsMap, err := buildIntegrationsMap(conf.Receivers, tmpl, firewallDialer, am.logger, am.secretsProviderRegistry, func(integrationName string, notifier notify.Notifier) notify.Notifier {
 		if am.cfg.Limits != nil {
 			rl := &tenantRateLimits{
 				tenant:      userID,
@@ -450,7 +461,8 @@ func (am *Alertmanager) ApplyConfig(userID string, conf *config.Config, rawCfg s
 
 	go am.dispatcher.Run()
 	go am.inhibitor.Run()
-
+	// we expect all the secrets have been registered by this point
+	am.secretsProviderRegistry.UpdateComplete()
 	am.configHashMetric.Set(md5HashAsMetricValue([]byte(rawCfg)))
 	return nil
 }
@@ -467,6 +479,10 @@ func (am *Alertmanager) Stop() {
 
 	if am.persister != nil {
 		am.persister.StopAsync()
+	}
+
+	if am.secretsProviderRegistry != nil {
+		am.secretsProviderRegistry.Stop()
 	}
 
 	if service, ok := am.state.(services.Service); ok {
@@ -511,10 +527,10 @@ func (am *Alertmanager) getFullState() (*clusterpb.FullState, error) {
 
 // buildIntegrationsMap builds a map of name to the list of integration notifiers off of a
 // list of receiver config.
-func buildIntegrationsMap(nc []config.Receiver, tmpl *template.Template, firewallDialer *util_net.FirewallDialer, logger log.Logger, notifierWrapper func(string, notify.Notifier) notify.Notifier) (map[string][]notify.Integration, error) {
+func buildIntegrationsMap(nc []config.Receiver, tmpl *template.Template, firewallDialer *util_net.FirewallDialer, logger log.Logger, spRegistry *secrets.SecretsProviderRegistry, notifierWrapper func(string, notify.Notifier) notify.Notifier) (map[string][]notify.Integration, error) {
 	integrationsMap := make(map[string][]notify.Integration, len(nc))
 	for _, rcv := range nc {
-		integrations, err := buildReceiverIntegrations(rcv, tmpl, firewallDialer, logger, notifierWrapper)
+		integrations, err := buildReceiverIntegrations(rcv, tmpl, firewallDialer, logger, spRegistry, notifierWrapper)
 		if err != nil {
 			return nil, err
 		}
@@ -526,7 +542,7 @@ func buildIntegrationsMap(nc []config.Receiver, tmpl *template.Template, firewal
 // buildReceiverIntegrations builds a list of integration notifiers off of a
 // receiver config.
 // Taken from https://github.com/prometheus/alertmanager/blob/d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d/cmd/alertmanager/main.go#L135-L193.
-func buildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, firewallDialer *util_net.FirewallDialer, logger log.Logger, wrapper func(string, notify.Notifier) notify.Notifier) ([]notify.Integration, error) {
+func buildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, firewallDialer *util_net.FirewallDialer, logger log.Logger, spRegistry *secrets.SecretsProviderRegistry, wrapper func(string, notify.Notifier) notify.Notifier) ([]notify.Integration, error) {
 	var (
 		errs         types.MultiError
 		integrations []notify.Integration
@@ -558,7 +574,7 @@ func buildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, fire
 	}
 	for i, c := range nc.PagerdutyConfigs {
 		add("pagerduty", i, c, func(l log.Logger) (notify.Notifier, error) {
-			return pagerduty.New(c, tmpl, util_log.GoKitLogToSlog(l), httpOps...)
+			return pagerduty.New(c, tmpl, util_log.GoKitLogToSlog(l), spRegistry, httpOps...)
 		})
 	}
 	for i, c := range nc.OpsGenieConfigs {

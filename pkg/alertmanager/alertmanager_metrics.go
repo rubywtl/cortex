@@ -70,6 +70,12 @@ type alertmanagerMetrics struct {
 	insertAlertFailures                     *prometheus.Desc
 	alertsLimiterAlertsCount                *prometheus.Desc
 	alertsLimiterAlertsSize                 *prometheus.Desc
+
+	secretsFetchersTotal               *prometheus.Desc
+	secretFetchErrorsTotal             *prometheus.Desc
+	secretFetchSuccessTotal            *prometheus.Desc
+	secretState                        *prometheus.Desc
+	timeSinceLastSuccessfulSecretFetch *prometheus.Desc
 }
 
 func newAlertmanagerMetrics() *alertmanagerMetrics {
@@ -259,6 +265,26 @@ func newAlertmanagerMetrics() *alertmanagerMetrics {
 			"cortex_alertmanager_alerts_limiter_current_alerts_size_bytes",
 			"Total size of alerts tracked by alerts limiter.",
 			[]string{"user"}, nil),
+		secretsFetchersTotal: prometheus.NewDesc(
+			"cortex_alertmanager_secrets_fetchers",
+			"Number of secret fetchers.",
+			[]string{"user", "provider"}, nil),
+		secretFetchErrorsTotal: prometheus.NewDesc(
+			"cortex_alertmanager_remote_secret_fetch_failures_total",
+			"Number of errors when fetching secrets.",
+			[]string{"user", "provider", "secret_id"}, nil),
+		secretFetchSuccessTotal: prometheus.NewDesc(
+			"cortex_alertmanager_remote_secret_fetch_success_total",
+			"Number of successful secret fetches.",
+			[]string{"user", "provider", "secret_id"}, nil),
+		secretState: prometheus.NewDesc(
+			"cortex_alertmanager_remote_secret_state",
+			"State of the secret.",
+			[]string{"user", "provider", "secret_id", "state", "category"}, nil),
+		timeSinceLastSuccessfulSecretFetch: prometheus.NewDesc(
+			"cortex_alertmanager_remote_secret_time_since_last_successful_fetch",
+			"Time since last successful secret fetch.",
+			[]string{"user", "provider", "secret_id"}, nil),
 	}
 }
 
@@ -319,6 +345,11 @@ func (m *alertmanagerMetrics) Describe(out chan<- *prometheus.Desc) {
 	out <- m.insertAlertFailures
 	out <- m.alertsLimiterAlertsCount
 	out <- m.alertsLimiterAlertsSize
+	out <- m.secretFetchErrorsTotal
+	out <- m.secretsFetchersTotal
+	out <- m.secretFetchSuccessTotal
+	out <- m.secretState
+	out <- m.timeSinceLastSuccessfulSecretFetch
 }
 
 func (m *alertmanagerMetrics) Collect(out chan<- prometheus.Metric) {
@@ -376,4 +407,11 @@ func (m *alertmanagerMetrics) Collect(out chan<- prometheus.Metric) {
 	data.SendSumOfCountersPerUser(out, m.insertAlertFailures, "alertmanager_alerts_insert_limited_total")
 	data.SendSumOfGaugesPerUser(out, m.alertsLimiterAlertsCount, "alertmanager_alerts_limiter_current_alerts")
 	data.SendSumOfGaugesPerUser(out, m.alertsLimiterAlertsSize, "alertmanager_alerts_limiter_current_alerts_size_bytes")
+
+	data.SendSumOfGaugesPerUserWithLabels(out, m.secretsFetchersTotal, "alertmanager_secrets_fetchers", "provider")
+	data.SendSumOfCountersPerUserWithLabels(out, m.secretFetchErrorsTotal, "alertmanager_remote_secret_fetch_failures_total", "provider", "secret_id")
+	data.SendSumOfCountersPerUserWithLabels(out, m.secretFetchSuccessTotal, "alertmanager_remote_secret_fetch_success_total", "provider", "secret_id")
+	data.SendSumOfGaugesPerUserWithLabels(out, m.secretState, "alertmanager_remote_secret_state", "provider", "secret_id", "state", "category")
+	data.SendSumOfGaugesPerUserWithLabels(out, m.timeSinceLastSuccessfulSecretFetch, "alertmanager_remote_secret_time_since_last_successful_fetch", "provider", "secret_id")
+
 }
