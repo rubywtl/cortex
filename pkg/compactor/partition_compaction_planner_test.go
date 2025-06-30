@@ -272,21 +272,23 @@ func TestPartitionCompactionPlanner_Plan(t *testing.T) {
 	visitMarkerTimeout := 5 * time.Minute
 	partitionedGroupID := uint32(1)
 	partitionID := 0
+	metricNamePartitionID := 0
 	for testName, testData := range tests {
 		t.Run(testName, func(t *testing.T) {
 			bkt := &bucket.ClientMock{}
-			visitMarkerFile := GetPartitionVisitMarkerFilePath(partitionedGroupID, partitionID)
+			visitMarkerFile := GetPartitionVisitMarkerFilePathWithMetricNamePartition(partitionedGroupID, metricNamePartitionID, partitionID)
 			expireTime := time.Now()
 			if testData.visitedPartition.isExpired {
 				expireTime = expireTime.Add(-1 * visitMarkerTimeout)
 			}
-			visitMarker := partitionVisitMarker{
-				CompactorID:        testData.visitedPartition.compactorID,
-				PartitionedGroupID: partitionedGroupID,
-				PartitionID:        partitionID,
-				VisitTime:          expireTime.Unix(),
-				Status:             Pending,
-				Version:            PartitionVisitMarkerVersion1,
+			visitMarker := PartitionVisitMarkerWithMetricNamePartition{
+				CompactorID:           testData.visitedPartition.compactorID,
+				PartitionedGroupID:    partitionedGroupID,
+				PartitionID:           partitionID,
+				VisitTime:             expireTime.Unix(),
+				Status:                Pending,
+				Version:               PartitionVisitMarkerVersion1,
+				MetricNamePartitionID: metricNamePartitionID,
 			}
 			visitMarkerFileContent, _ := json.Marshal(visitMarker)
 			bkt.MockGet(visitMarkerFile, string(visitMarkerFileContent), nil)
@@ -316,14 +318,16 @@ func TestPartitionCompactionPlanner_Plan(t *testing.T) {
 			)
 			actual, err := p.Plan(context.Background(), testData.blocks, nil, &cortextsdb.CortexMetaExtensions{
 				PartitionInfo: &cortextsdb.PartitionInfo{
-					PartitionCount:     1,
-					PartitionID:        partitionID,
-					PartitionedGroupID: partitionedGroupID,
+					PartitionCount:           1,
+					PartitionID:              partitionID,
+					MetricNamePartitionCount: 1,
+					MetricNamePartitionID:    metricNamePartitionID,
+					PartitionedGroupID:       partitionedGroupID,
 				},
 			})
 
 			if testData.expectedErr != nil {
-				assert.Equal(t, err, testData.expectedErr)
+				assert.Equal(t, testData.expectedErr, err)
 			} else {
 				require.NoError(t, err)
 			}

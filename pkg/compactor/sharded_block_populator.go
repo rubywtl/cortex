@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
@@ -18,12 +19,18 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	tsdb_errors "github.com/prometheus/prometheus/tsdb/errors"
 	"golang.org/x/sync/errgroup"
+
+	cortextsdb "github.com/cortexproject/cortex/pkg/storage/tsdb"
 )
 
 type ShardedBlockPopulator struct {
-	partitionCount int
-	partitionID    int
-	logger         log.Logger
+	metricNamePartitionCount int
+	metricNamePartitionID    int
+	partitionCount           int
+	partitionID              int
+	logger                   log.Logger
+
+	blockPartitionInfos map[ulid.ULID]cortextsdb.BlockPartitionInfo
 }
 
 // PopulateBlock fills the index and chunk writers with new data gathered as the union
@@ -85,9 +92,10 @@ func (c ShardedBlockPopulator) PopulateBlock(ctx context.Context, metrics *tsdb.
 		closers = append(closers, tombsr)
 
 		all := postingsFunc(gCtx, indexr)
+		id := b.Meta().ULID
 		g.Go(func() error {
 			shardStart := time.Now()
-			shardedPosting, syms, err := NewShardedPosting(gCtx, all, uint64(c.partitionCount), uint64(c.partitionID), indexr.Series)
+			shardedPosting, syms, err := NewShardedPosting(gCtx, all, id, c.blockPartitionInfos, indexr.Symbols, uint64(c.partitionCount), uint64(c.partitionID), uint64(c.metricNamePartitionCount), uint64(c.metricNamePartitionID), indexr.Series)
 			if err != nil {
 				return err
 			}

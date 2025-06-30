@@ -213,10 +213,11 @@ type Limits struct {
 	MaxDownloadedBytesPerRequest int     `yaml:"max_downloaded_bytes_per_request" json:"max_downloaded_bytes_per_request"`
 
 	// Compactor.
-	CompactorBlocksRetentionPeriod   model.Duration `yaml:"compactor_blocks_retention_period" json:"compactor_blocks_retention_period"`
-	CompactorTenantShardSize         float64        `yaml:"compactor_tenant_shard_size" json:"compactor_tenant_shard_size"`
-	CompactorPartitionIndexSizeBytes int64          `yaml:"compactor_partition_index_size_bytes" json:"compactor_partition_index_size_bytes"`
-	CompactorPartitionSeriesCount    int64          `yaml:"compactor_partition_series_count" json:"compactor_partition_series_count"`
+	CompactorBlocksRetentionPeriod               model.Duration `yaml:"compactor_blocks_retention_period" json:"compactor_blocks_retention_period"`
+	CompactorTenantShardSize                     float64        `yaml:"compactor_tenant_shard_size" json:"compactor_tenant_shard_size"`
+	CompactorPartitionIndexSizeBytes             int64          `yaml:"compactor_partition_index_size_bytes" json:"compactor_partition_index_size_bytes"`
+	CompactorPartitionSeriesCount                int64          `yaml:"compactor_partition_series_count" json:"compactor_partition_series_count"`
+	CompactorMetricNamePartitionSeriesCountLimit int64          `yaml:"compactor_metric_name_partition_series_count_limit" json:"compactor_metric_name_partition_series_count_limit"`
 
 	// Parquet converter
 	ParquetConverterEnabled         bool    `yaml:"parquet_converter_enabled" json:"parquet_converter_enabled" doc:"hidden"`
@@ -331,6 +332,7 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 	f.Float64Var(&l.ParquetConverterTenantShardSize, "parquet-converter.tenant-shard-size", 0, "The default tenant's shard size when the shuffle-sharding strategy is used by the parquet converter. When this setting is specified in the per-tenant overrides, a value of 0 disables shuffle sharding for the tenant. If the value is < 1 and > 0 the shard size will be a percentage of the total parquet converters.")
 	f.BoolVar(&l.ParquetConverterEnabled, "parquet-converter.enabled", false, "If set, enables the Parquet converter to create the parquet files.")
 	f.IntVar(&l.MetricNameShardSize, "compactor.metric-name-shard-size", 0, "Shard by metric name shard size.")
+	f.Int64Var(&l.CompactorMetricNamePartitionSeriesCountLimit, "compactor.metric-name-partition-series-count-limit", 0, "Time series count limit for each compaction partition by metric name. 0 means no limit")
 
 	// Parquet Queryable enforced limits.
 	f.IntVar(&l.ParquetMaxFetchedRowCount, "querier.parquet-queryable.max-fetched-row-count", 0, "The maximum number of rows that can be fetched when querying parquet storage. Each row maps to a series in a parquet file. This limit applies before materializing chunks. 0 to disable.")
@@ -936,6 +938,11 @@ func (o *Overrides) CompactorPartitionIndexSizeBytes(userID string) int64 {
 // CompactorPartitionSeriesCount returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
 func (o *Overrides) CompactorPartitionSeriesCount(userID string) int64 {
 	return o.GetOverridesForUser(userID).CompactorPartitionSeriesCount
+}
+
+// CompactorMetricNamePartitionSeriesCountLimit returns series count limit partition by metric name.
+func (o *Overrides) CompactorMetricNamePartitionSeriesCountLimit(userID string) int64 {
+	return o.GetOverridesForUser(userID).CompactorMetricNamePartitionSeriesCountLimit
 }
 
 func (o *Overrides) GetMetricNameShardSize(userID string) int {

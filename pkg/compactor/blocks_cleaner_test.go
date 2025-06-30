@@ -896,6 +896,7 @@ func TestBlocksCleaner_CleanPartitionedGroupInfo(t *testing.T) {
 	userID := "user-1"
 	partitionedGroupID := uint32(123)
 	partitionCount := 1
+	metricNamePartitionCount := 1
 	startTime := ts(-10)
 	endTime := ts(-8)
 	block1 := createTSDBBlock(t, bucketClient, userID, startTime, endTime, nil)
@@ -930,29 +931,46 @@ func TestBlocksCleaner_CleanPartitionedGroupInfo(t *testing.T) {
 	userBucket := bucket.NewUserBucketClient(userID, bucketClient, cfgProvider)
 
 	partitionedGroupInfo := PartitionedGroupInfo{
-		PartitionedGroupID: partitionedGroupID,
-		PartitionCount:     partitionCount,
-		Partitions: []Partition{
+		PartitionedGroupID:       partitionedGroupID,
+		MetricNamePartitionCount: metricNamePartitionCount,
+		MetricNamePartitions: []MetricNamePartition{
 			{
-				PartitionID: 0,
-				Blocks:      []ulid.ULID{block1, block2},
+				MetricNamePartitionID: 0,
+				PartitionCount:        partitionCount,
+				Partitions: []Partition{
+					{
+						PartitionID: 0,
+						Blocks:      []ulid.ULID{block1, block2},
+					},
+				},
 			},
 		},
 		RangeStart:   startTime,
 		RangeEnd:     endTime,
 		CreationTime: time.Now().Add(-5 * time.Minute).Unix(),
-		Version:      PartitionedGroupInfoVersion1,
+		Version:      PartitionedGroupInfoVersion2,
 	}
 	_, err = UpdatePartitionedGroupInfo(ctx, userBucket, logger, partitionedGroupInfo)
 	require.NoError(t, err)
 
-	visitMarker := &partitionVisitMarker{
+	visitMarker := &PartitionVisitMarkerWithMetricNamePartition{
+		PartitionedGroupID:    partitionedGroupID,
+		PartitionID:           0,
+		Status:                Completed,
+		VisitTime:             time.Now().Add(-2 * time.Minute).Unix(),
+		MetricNamePartitionID: 0,
+	}
+	visitMarkerManager := NewVisitMarkerManager(userBucket, logger, "dummy-cleaner", visitMarker)
+	err = visitMarkerManager.updateVisitMarker(ctx)
+	require.NoError(t, err)
+
+	oldPartitionVisitMarker := &partitionVisitMarker{
 		PartitionedGroupID: partitionedGroupID,
 		PartitionID:        0,
 		Status:             Completed,
 		VisitTime:          time.Now().Add(-2 * time.Minute).Unix(),
 	}
-	visitMarkerManager := NewVisitMarkerManager(userBucket, logger, "dummy-cleaner", visitMarker)
+	visitMarkerManager = NewVisitMarkerManager(userBucket, logger, "dummy-cleaner", visitMarker)
 	err = visitMarkerManager.updateVisitMarker(ctx)
 	require.NoError(t, err)
 
@@ -966,9 +984,15 @@ func TestBlocksCleaner_CleanPartitionedGroupInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, block1DeletionMarkerExists)
 
-	block2DeletionMarkerExists, err := userBucket.Exists(ctx, path.Join(block2.String(), metadata.DeletionMarkFilename))
+	// Make sure new visit marker got deleted.
+	exists, err := userBucket.Exists(ctx, visitMarker.GetVisitMarkerFilePath())
 	require.NoError(t, err)
-	require.False(t, block2DeletionMarkerExists)
+	require.False(t, exists)
+
+	// Make sure old visit marker got deleted.
+	exists, err = userBucket.Exists(ctx, oldPartitionVisitMarker.GetVisitMarkerFilePath())
+	require.NoError(t, err)
+	require.False(t, exists)
 }
 
 func TestBlocksCleaner_DeleteEmptyBucketIndex(t *testing.T) {
@@ -1008,18 +1032,24 @@ func TestBlocksCleaner_DeleteEmptyBucketIndex(t *testing.T) {
 	require.NoError(t, userBucket.Upload(context.Background(), debugMetaFile, strings.NewReader("some random content here")))
 
 	partitionedGroupInfo := PartitionedGroupInfo{
-		PartitionedGroupID: 1234,
-		PartitionCount:     1,
-		Partitions: []Partition{
+		PartitionedGroupID:       1234,
+		MetricNamePartitionCount: 1,
+		MetricNamePartitions: []MetricNamePartition{
 			{
-				PartitionID: 0,
-				Blocks:      []ulid.ULID{},
+				MetricNamePartitionID: 0,
+				PartitionCount:        1,
+				Partitions: []Partition{
+					{
+						PartitionID: 0,
+						Blocks:      []ulid.ULID{},
+					},
+				},
 			},
 		},
 		RangeStart:   0,
 		RangeEnd:     2,
 		CreationTime: time.Now().Add(-5 * time.Minute).Unix(),
-		Version:      PartitionedGroupInfoVersion1,
+		Version:      PartitionedGroupInfoVersion2,
 	}
 	_, err = UpdatePartitionedGroupInfo(ctx, userBucket, logger, partitionedGroupInfo)
 	require.NoError(t, err)
@@ -1165,35 +1195,41 @@ func TestBlocksCleaner_EmitUserMetrics(t *testing.T) {
 	endTime := ts(-8)
 	userBucket := bucket.NewUserBucketClient(userID, bucketClient, cfgProvider)
 	partitionedGroupInfo := PartitionedGroupInfo{
-		PartitionedGroupID: partitionedGroupID,
-		PartitionCount:     partitionCount,
-		Partitions: []Partition{
+		PartitionedGroupID:       partitionedGroupID,
+		MetricNamePartitionCount: 1,
+		MetricNamePartitions: []MetricNamePartition{
 			{
-				PartitionID: 0,
-			},
-			{
-				PartitionID: 1,
-			},
-			{
-				PartitionID: 2,
-			},
-			{
-				PartitionID: 3,
-			},
-			{
-				PartitionID: 4,
+				MetricNamePartitionID: 0,
+				PartitionCount:        partitionCount,
+				Partitions: []Partition{
+					{
+						PartitionID: 0,
+					},
+					{
+						PartitionID: 1,
+					},
+					{
+						PartitionID: 2,
+					},
+					{
+						PartitionID: 3,
+					},
+					{
+						PartitionID: 4,
+					},
+				},
 			},
 		},
 		RangeStart:   startTime,
 		RangeEnd:     endTime,
 		CreationTime: time.Now().Add(-1 * time.Hour).Unix(),
-		Version:      PartitionedGroupInfoVersion1,
+		Version:      PartitionedGroupInfoVersion2,
 	}
 	_, err = UpdatePartitionedGroupInfo(ctx, userBucket, logger, partitionedGroupInfo)
 	require.NoError(t, err)
 
 	//InProgress with valid VisitTime
-	v0 := &partitionVisitMarker{
+	v0 := &PartitionVisitMarkerWithMetricNamePartition{
 		PartitionedGroupID: partitionedGroupID,
 		PartitionID:        0,
 		Status:             InProgress,
@@ -1204,7 +1240,7 @@ func TestBlocksCleaner_EmitUserMetrics(t *testing.T) {
 	require.NoError(t, err)
 
 	//InProgress with expired VisitTime
-	v1 := &partitionVisitMarker{
+	v1 := &PartitionVisitMarkerWithMetricNamePartition{
 		PartitionedGroupID: partitionedGroupID,
 		PartitionID:        1,
 		Status:             InProgress,
@@ -1216,7 +1252,7 @@ func TestBlocksCleaner_EmitUserMetrics(t *testing.T) {
 
 	//V2 and V3 are pending
 	//V4 is completed
-	v4 := &partitionVisitMarker{
+	v4 := &PartitionVisitMarkerWithMetricNamePartition{
 		PartitionedGroupID: partitionedGroupID,
 		PartitionID:        4,
 		Status:             Completed,

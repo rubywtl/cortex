@@ -319,6 +319,14 @@ type blocksGroup struct {
 	key        string
 }
 
+func (g blocksGroup) RangeStart() int64 {
+	return g.rangeStart
+}
+
+func (g blocksGroup) RangeEnd() int64 {
+	return g.rangeEnd
+}
+
 // overlaps returns whether the group range overlaps with the input group.
 func (g blocksGroup) overlaps(other blocksGroup) bool {
 	if g.rangeStart >= other.rangeEnd || other.rangeStart >= g.rangeEnd {

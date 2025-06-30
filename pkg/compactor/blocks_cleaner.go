@@ -860,7 +860,7 @@ func (c *BlocksCleaner) iterPartitionGroups(ctx context.Context, userBucket objs
 		if strings.Contains(file, PartitionVisitMarkerDirectory) {
 			return nil
 		}
-		partitionedGroupInfo, err := ReadPartitionedGroupInfoFile(ctx, userBucket, userLogger, file)
+		partitionedGroupInfo, _, err := ReadPartitionedGroupInfoFile(ctx, userBucket, userLogger, file)
 		if err != nil {
 			level.Warn(userLogger).Log("msg", "failed to read partitioned group info", "partitioned_group_info", file)
 			return nil

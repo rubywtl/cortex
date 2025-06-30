@@ -78,6 +78,7 @@ func (p *PartitionCompactionPlanner) PlanWithPartition(_ context.Context, metasB
 	if partitionInfo == nil {
 		return nil, fmt.Errorf("partitionInfo cannot be nil")
 	}
+	metricNamePartitionID := partitionInfo.MetricNamePartitionID
 	partitionID := partitionInfo.PartitionID
 	partitionedGroupID := partitionInfo.PartitionedGroupID
 
@@ -85,9 +86,9 @@ func (p *PartitionCompactionPlanner) PlanWithPartition(_ context.Context, metasB
 	// claimed same partition in grouper at same time.
 	time.Sleep(p.plannerDelay)
 
-	visitMarker := newPartitionVisitMarker(p.ringLifecyclerID, partitionedGroupID, partitionID)
+	visitMarker := NewPartitionVisitMarkerWithMetricNamePartition(p.ringLifecyclerID, partitionedGroupID, metricNamePartitionID, partitionID)
 	visitMarkerManager := NewVisitMarkerManager(p.bkt, p.logger, p.ringLifecyclerID, visitMarker)
-	existingPartitionVisitMarker := &partitionVisitMarker{}
+	existingPartitionVisitMarker := &PartitionVisitMarkerWithMetricNamePartition{}
 	err := visitMarkerManager.ReadVisitMarker(p.ctx, existingPartitionVisitMarker)
 	visitMarkerExists := true
 	if err != nil {
@@ -95,16 +96,16 @@ func (p *PartitionCompactionPlanner) PlanWithPartition(_ context.Context, metasB
 			visitMarkerExists = false
 		} else {
 			p.compactorMetrics.compactionsNotPlanned.WithLabelValues(p.userID, cortexMetaExtensions.TimeRangeStr()).Inc()
-			return nil, fmt.Errorf("unable to get visit marker file for partition with partition ID %d, partitioned group ID %d: %s", partitionID, partitionedGroupID, err.Error())
+			return nil, fmt.Errorf("unable to get visit marker file for partition with metricNamePartitionID %d, partitionID %d, partitioned group ID %d: %s", metricNamePartitionID, partitionID, partitionedGroupID, err.Error())
 		}
 	}
 	if visitMarkerExists {
 		if existingPartitionVisitMarker.GetStatus() == Completed {
-			level.Warn(p.logger).Log("msg", "partition is in completed status", "partitioned_group_id", partitionedGroupID, "partition_id", partitionID, "compactor_id", p.ringLifecyclerID, existingPartitionVisitMarker.String())
+			level.Warn(p.logger).Log("msg", "partition is in completed status", "partitioned_group_id", partitionedGroupID, "metric_name_partition_id", metricNamePartitionID, "partition_id", partitionID, "compactor_id", p.ringLifecyclerID, "visit_marker", existingPartitionVisitMarker.String())
 			return nil, plannerCompletedPartitionError
 		}
-		if !existingPartitionVisitMarker.IsPendingByCompactor(p.partitionVisitMarkerTimeout, partitionID, p.ringLifecyclerID) {
-			level.Warn(p.logger).Log("msg", "partition is not visited by current compactor", "partitioned_group_id", partitionedGroupID, "partition_id", partitionID, "compactor_id", p.ringLifecyclerID, existingPartitionVisitMarker.String())
+		if !existingPartitionVisitMarker.IsPendingByCompactor(p.partitionVisitMarkerTimeout, metricNamePartitionID, partitionID, p.ringLifecyclerID) {
+			level.Warn(p.logger).Log("msg", "partition is not visited by current compactor", "partitioned_group_id", partitionedGroupID, "metric_name_partition_id", metricNamePartitionID, "partition_id", partitionID, "compactor_id", p.ringLifecyclerID, "visit_marker", existingPartitionVisitMarker.String())
 			return nil, plannerVisitedPartitionError
 		}
 	}

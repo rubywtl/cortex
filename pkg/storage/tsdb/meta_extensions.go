@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 )
 
@@ -24,6 +26,15 @@ type PartitionInfo struct {
 	MetricNamePartitionCount     int    `json:"metric_name_partition_count"`
 	MetricNamePartitionID        int    `json:"metric_name_partition_id"`
 	PartitionedGroupCreationTime int64  `json:"partitioned_group_creation_time"`
+
+	// Json struct tag is set for this field. But it should be used in memory only
+	// and should never be set to when serializing partition info to file.
+	BlockPartitionInfos map[ulid.ULID]BlockPartitionInfo `json:"block_partition_infos,omitempty"`
+}
+
+type BlockPartitionInfo struct {
+	PartitionCount           int
+	MetricNamePartitionCount int
 }
 
 var (

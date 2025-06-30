@@ -38,9 +38,12 @@ type compactorMetrics struct {
 	verticalCompactions         *prometheus.CounterVec
 	remainingPlannedCompactions *prometheus.GaugeVec
 	compactionErrorsCount       *prometheus.CounterVec
-	partitionCount              *prometheus.GaugeVec
 	compactionsNotPlanned       *prometheus.CounterVec
 	compactionDuration          *prometheus.GaugeVec
+
+	totalPartitionCount                 *prometheus.GaugeVec
+	metricNamePartitionCount            *prometheus.GaugeVec
+	maxPartitionsPerMetricNamePartition *prometheus.GaugeVec
 }
 
 const (
@@ -166,9 +169,17 @@ func newCompactorMetricsWithLabels(reg prometheus.Registerer, commonLabels []str
 		Name: "cortex_compactor_compaction_error_total",
 		Help: "Total number of errors from compactions.",
 	}, append(commonLabels, compactionErrorTypesLabelName))
-	m.partitionCount = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+	m.totalPartitionCount = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
 		Name: "cortex_compactor_group_partition_count",
 		Help: "Number of partitions for each compaction group.",
+	}, compactionLabels)
+	m.metricNamePartitionCount = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+		Name: "cortex_compact_group_metric_name_partition_count",
+		Help: "Number of metric name partitions.",
+	}, compactionLabels)
+	m.maxPartitionsPerMetricNamePartition = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+		Name: "cortex_compact_group_max_partition_count_per_metric_name_partition",
+		Help: "Max number of partitions from all metric name partitions",
 	}, compactionLabels)
 	m.compactionsNotPlanned = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "cortex_compactor_group_compactions_not_planned_total",
@@ -228,7 +239,9 @@ func (m *compactorMetrics) initMetricWithCompactionLabelValues(labelValue ...str
 	m.compactionRunsCompleted.WithLabelValues(labelValue...)
 	m.compactionFailures.WithLabelValues(labelValue...)
 	m.verticalCompactions.WithLabelValues(labelValue...)
-	m.partitionCount.WithLabelValues(labelValue...)
+	m.totalPartitionCount.WithLabelValues(labelValue...)
+	m.metricNamePartitionCount.WithLabelValues(labelValue...)
+	m.maxPartitionsPerMetricNamePartition.WithLabelValues(labelValue...)
 	m.compactionsNotPlanned.WithLabelValues(labelValue...)
 	m.compactionDuration.WithLabelValues(labelValue...)
 }
@@ -241,7 +254,9 @@ func (m *compactorMetrics) deleteMetricsForDeletedTenant(userID string) {
 	m.compactionRunsCompleted.DeleteLabelValues(userID)
 	m.compactionFailures.DeleteLabelValues(userID)
 	m.verticalCompactions.DeleteLabelValues(userID)
-	m.partitionCount.DeleteLabelValues(userID)
+	m.totalPartitionCount.DeleteLabelValues(userID)
+	m.metricNamePartitionCount.DeleteLabelValues(userID)
+	m.maxPartitionsPerMetricNamePartition.DeleteLabelValues(userID)
 	m.compactionsNotPlanned.DeleteLabelValues(userID)
 	m.compactionDuration.DeleteLabelValues(userID)
 }

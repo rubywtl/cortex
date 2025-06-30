@@ -248,6 +248,11 @@ type Limits interface {
 	CompactorTenantShardSize(userID string) float64
 	CompactorPartitionIndexSizeBytes(userID string) int64
 	CompactorPartitionSeriesCount(userID string) int64
+	CompactorPartitionIndexSizeLimitInBytes(userID string) int64
+	CompactorPartitionSeriesCountLimit(userID string) int64
+	CompactorPartitionLevel1IndexSizeLimitInBytes(userID string) int64
+	CompactorPartitionLevel1SeriesCountLimit(userID string) int64
+	CompactorMetricNamePartitionSeriesCountLimit(userID string) int64
 }
 
 // Config holds the Compactor config.
@@ -466,6 +471,10 @@ type Compactor struct {
 func NewCompactor(compactorCfg Config, storageCfg cortex_tsdb.BlocksStorageConfig, logger log.Logger, registerer prometheus.Registerer, limits *validation.Overrides, ingestionReplicationFactor int) (*Compactor, error) {
 	bucketClientFactory := func(ctx context.Context) (objstore.InstrumentedBucket, error) {
 		return bucket.NewClient(ctx, storageCfg.Bucket, nil, "compactor", logger, registerer)
+	}
+
+	if compactorCfg.ShardingStrategy == util.ShardingStrategyShuffle {
+		compactorCfg.CompactionStrategy = util.CompactionStrategyPartitioning
 	}
 
 	blocksGrouperFactory := compactorCfg.BlocksGrouperFactory

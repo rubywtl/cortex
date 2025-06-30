@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/compact"
+
+	cortex_tsdb "github.com/cortexproject/cortex/pkg/storage/tsdb"
 )
 
 func TestPreCompactionCallback(t *testing.T) {
@@ -94,4 +96,142 @@ func TestPreCompactionCallback(t *testing.T) {
 	_, err = os.Stat(filepath.Join(compactDir, dummyGroupID2))
 	require.Error(t, err)
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestGetBlockPopulator(t *testing.T) {
+	ctx := context.Background()
+	logger := log.NewNopLogger()
+	partitionGroupID := uint32(111)
+	partitionCreationTime := int64(999)
+	ulid1 := ulid.MustNew(1, nil)
+	ulid2 := ulid.MustNew(2, nil)
+	ulid3 := ulid.MustNew(3, nil)
+	for _, tc := range []struct {
+		name              string
+		extensions        any
+		expectedPopulator tsdb.BlockPopulator
+	}{
+		{
+			name:              "nil extensions",
+			extensions:        nil,
+			expectedPopulator: tsdb.DefaultBlockPopulator{},
+		},
+		{
+			name: "0 partition count",
+			extensions: &cortex_tsdb.CortexMetaExtensions{
+				PartitionInfo: &cortex_tsdb.PartitionInfo{
+					PartitionCount:               0,
+					PartitionedGroupID:           partitionGroupID,
+					PartitionedGroupCreationTime: partitionCreationTime,
+				},
+			},
+			expectedPopulator: ShardedBlockPopulator{
+				metricNamePartitionCount: 1,
+				metricNamePartitionID:    0,
+				partitionCount:           1,
+				partitionID:              0,
+				logger:                   logger,
+			},
+		},
+		{
+			name: "2 partition count, but 0 metric name count",
+			extensions: &cortex_tsdb.CortexMetaExtensions{
+				PartitionInfo: &cortex_tsdb.PartitionInfo{
+					PartitionCount:               2,
+					PartitionedGroupID:           partitionGroupID,
+					PartitionedGroupCreationTime: partitionCreationTime,
+				},
+			},
+			expectedPopulator: ShardedBlockPopulator{
+				metricNamePartitionCount: 1,
+				metricNamePartitionID:    0,
+				partitionCount:           2,
+				partitionID:              0,
+				logger:                   logger,
+			},
+		},
+		{
+			name: "4 partition count, 8 metric name count",
+			extensions: &cortex_tsdb.CortexMetaExtensions{
+				PartitionInfo: &cortex_tsdb.PartitionInfo{
+					PartitionCount:               4,
+					MetricNamePartitionCount:     8,
+					PartitionedGroupID:           partitionGroupID,
+					PartitionedGroupCreationTime: partitionCreationTime,
+				},
+			},
+			expectedPopulator: ShardedBlockPopulator{
+				metricNamePartitionCount: 8,
+				metricNamePartitionID:    0,
+				partitionCount:           4,
+				partitionID:              0,
+				logger:                   logger,
+			},
+		},
+		{
+			name: "4 partition count, 2 partition id, 8 metric name count, 3 metric name partition id",
+			extensions: &cortex_tsdb.CortexMetaExtensions{
+				PartitionInfo: &cortex_tsdb.PartitionInfo{
+					PartitionCount:               4,
+					PartitionID:                  2,
+					MetricNamePartitionCount:     8,
+					MetricNamePartitionID:        3,
+					PartitionedGroupID:           partitionGroupID,
+					PartitionedGroupCreationTime: partitionCreationTime,
+				},
+			},
+			expectedPopulator: ShardedBlockPopulator{
+				metricNamePartitionCount: 8,
+				metricNamePartitionID:    3,
+				partitionCount:           4,
+				partitionID:              2,
+				logger:                   logger,
+			},
+		},
+		{
+			name: "block partition info exists",
+			extensions: &cortex_tsdb.CortexMetaExtensions{
+				PartitionInfo: &cortex_tsdb.PartitionInfo{
+					PartitionCount:               4,
+					PartitionID:                  2,
+					MetricNamePartitionCount:     8,
+					MetricNamePartitionID:        3,
+					PartitionedGroupID:           partitionGroupID,
+					PartitionedGroupCreationTime: partitionCreationTime,
+					BlockPartitionInfos: map[ulid.ULID]cortex_tsdb.BlockPartitionInfo{
+						ulid1: {PartitionCount: 4, MetricNamePartitionCount: 8},
+						ulid2: {PartitionCount: 1, MetricNamePartitionCount: 4},
+						ulid3: {PartitionCount: 2, MetricNamePartitionCount: 16},
+					},
+				},
+			},
+			expectedPopulator: ShardedBlockPopulator{
+				metricNamePartitionCount: 8,
+				metricNamePartitionID:    3,
+				partitionCount:           4,
+				partitionID:              2,
+				logger:                   logger,
+				blockPartitionInfos: map[ulid.ULID]cortex_tsdb.BlockPartitionInfo{
+					ulid1: {PartitionCount: 4, MetricNamePartitionCount: 8},
+					ulid2: {PartitionCount: 1, MetricNamePartitionCount: 4},
+					ulid3: {PartitionCount: 2, MetricNamePartitionCount: 16},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cg := &compact.Group{}
+			cg.SetExtensions(tc.extensions)
+			c := ShardedCompactionLifecycleCallback{}
+			bp, err := c.GetBlockPopulator(ctx, logger, cg)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedPopulator, bp)
+			ext := cg.Extensions()
+			partitionInfo, err := cortex_tsdb.ConvertToPartitionInfo(ext)
+			require.NoError(t, err)
+			if partitionInfo != nil {
+				require.Nil(t, partitionInfo.BlockPartitionInfos)
+			}
+		})
+	}
 }

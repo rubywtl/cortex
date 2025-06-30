@@ -92,6 +92,25 @@ func TestConfig_ShouldSupportCliFlags(t *testing.T) {
 	assert.Equal(t, 123, cfg.CompactionRetries)
 }
 
+func TestConfig_DefaultPartitioningCompaction(t *testing.T) {
+	cfg := Config{}
+	limits := validation.Limits{}
+	flagext.DefaultValues(&cfg, &limits)
+	storageCfg := cortex_tsdb.BlocksStorageConfig{}
+	flagext.DefaultValues(&storageCfg)
+	cfg.ShardingStrategy = util.ShardingStrategyShuffle
+	cfg.ShardingEnabled = true
+	limits.CompactorTenantShardSize = 1
+
+	logs := &concurrency.SyncBuffer{}
+	logger := log.NewLogfmtLogger(logs)
+
+	overrides := validation.NewOverrides(limits, nil)
+	c, err := NewCompactor(cfg, storageCfg, logger, prometheus.NewRegistry(), overrides, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, util.CompactionStrategyPartitioning, c.compactorCfg.CompactionStrategy)
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := map[string]struct {
 		setup      func(cfg *Config)
@@ -1559,6 +1578,8 @@ func prepareConfig() Config {
 
 	// Set lower timeout for waiting on compactor to become ACTIVE in the ring for unit tests
 	compactorCfg.ShardingRing.WaitActiveInstanceTimeout = 5 * time.Second
+
+	compactorCfg.CompactionStrategy = util.CompactionStrategyDefault
 
 	return compactorCfg
 }

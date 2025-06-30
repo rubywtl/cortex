@@ -81,15 +81,23 @@ func (c *ShardedCompactionLifecycleCallback) PostCompactionCallback(_ context.Co
 }
 
 func (c *ShardedCompactionLifecycleCallback) GetBlockPopulator(_ context.Context, logger log.Logger, cg *compact.Group) (tsdb.BlockPopulator, error) {
-	partitionInfo, err := cortextsdb.ConvertToPartitionInfo(cg.Extensions())
+	cortexMeta, err := cortextsdb.ConvertToCortexMetaExtensions(cg.Extensions())
 	if err != nil {
 		return nil, err
 	}
-	if partitionInfo == nil {
+	if cortexMeta == nil || cortexMeta.PartitionInfo == nil {
 		return tsdb.DefaultBlockPopulator{}, nil
 	}
+
+	partitionInfo := cortexMeta.PartitionInfo
+	blockPartitionInfos := partitionInfo.BlockPartitionInfos
+	// clear BlockPartitionInfos to not persist the information to the compacted block.
+	partitionInfo.BlockPartitionInfos = nil
+
 	if partitionInfo.PartitionCount <= 0 {
 		partitionInfo = &cortextsdb.PartitionInfo{
+			MetricNamePartitionCount:     1,
+			MetricNamePartitionID:        partitionInfo.MetricNamePartitionID,
 			PartitionCount:               1,
 			PartitionID:                  partitionInfo.PartitionID,
 			PartitionedGroupID:           partitionInfo.PartitionedGroupID,
@@ -97,12 +105,36 @@ func (c *ShardedCompactionLifecycleCallback) GetBlockPopulator(_ context.Context
 		}
 		cg.SetExtensions(&cortextsdb.CortexMetaExtensions{
 			PartitionInfo: partitionInfo,
+			Version:       cortextsdb.CortexMetaExtensionsVersion1,
+		})
+	} else if partitionInfo.MetricNamePartitionCount <= 0 {
+		partitionInfo = &cortextsdb.PartitionInfo{
+			MetricNamePartitionCount:     1,
+			MetricNamePartitionID:        partitionInfo.MetricNamePartitionID,
+			PartitionCount:               partitionInfo.PartitionCount,
+			PartitionID:                  partitionInfo.PartitionID,
+			PartitionedGroupID:           partitionInfo.PartitionedGroupID,
+			PartitionedGroupCreationTime: partitionInfo.PartitionedGroupCreationTime,
+		}
+		cg.SetExtensions(&cortextsdb.CortexMetaExtensions{
+			PartitionInfo: partitionInfo,
+			Version:       cortextsdb.CortexMetaExtensionsVersion1,
+		})
+	} else {
+		cg.SetExtensions(&cortextsdb.CortexMetaExtensions{
+			PartitionInfo: partitionInfo,
+			TimeRange:     cortexMeta.TimeRange,
+			Version:       cortextsdb.CortexMetaExtensionsVersion1,
 		})
 	}
+
 	populateBlockFunc := ShardedBlockPopulator{
-		partitionCount: partitionInfo.PartitionCount,
-		partitionID:    partitionInfo.PartitionID,
-		logger:         logger,
+		metricNamePartitionCount: partitionInfo.MetricNamePartitionCount,
+		metricNamePartitionID:    partitionInfo.MetricNamePartitionID,
+		partitionCount:           partitionInfo.PartitionCount,
+		partitionID:              partitionInfo.PartitionID,
+		blockPartitionInfos:      blockPartitionInfos,
+		logger:                   logger,
 	}
 	return populateBlockFunc, nil
 }

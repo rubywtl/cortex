@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kit/log"
 	"github.com/oklog/ulid/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/tsdb"
@@ -36,6 +37,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 	block5 := ulid.MustNew(5, nil)
 	block6 := ulid.MustNew(6, nil)
 	block7 := ulid.MustNew(7, nil)
+	block98 := ulid.MustNew(98, nil)
+	block99 := ulid.MustNew(99, nil)
 
 	testCompactorID := "test-compactor"
 	//otherCompactorID := "other-compactor"
@@ -80,8 +83,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
-				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"only level 1 blocks with ingestion replication factor 3": {
@@ -138,7 +141,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4, block5, block6}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4, block5, block6}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 			ingestionReplicationFactor: 3,
 		},
@@ -175,13 +178,20 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 2 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2}},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
-				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"only level 1 blocks, there are existing partitioned group files for all blocks": {
@@ -217,16 +227,30 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 2 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2}},
-				}},
-				{rangeStart: 2 * H, rangeEnd: 4 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block3, block4}},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2},
+						},
+					},
+				},
+				{
+					rangeStart: 2 * H,
+					rangeEnd:   4 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block3, block4},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
-				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 2 * H, rangeEnd: 4 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"only level 2 blocks": {
@@ -275,7 +299,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"only level 2 blocks, there is existing partitioned group file": {
@@ -323,12 +347,19 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 12 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2, block3, block4}},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2, block3, block4},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"only level 2 blocks from same time range": {
@@ -353,7 +384,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"mix level 1 and level 2 blocks": {
@@ -400,7 +431,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 10 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 10 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"mix level 1 and level 2 blocks, there is partitioned group file for level 1 blocks": {
@@ -446,12 +477,19 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 10 * H, rangeEnd: 12 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block4, block5}},
-				}},
+				{
+					rangeStart: 10 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block4, block5},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 10 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 10 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"mix level 1 and level 2 blocks in different time range": {
@@ -498,8 +536,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H},
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"mix level 1 and level 2 blocks in different time range, there are partitioned group files for all groups": {
@@ -545,16 +583,30 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 12 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2, block3}},
-				}},
-				{rangeStart: 12 * H, rangeEnd: 14 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block4, block5}},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2, block3},
+						},
+					},
+				},
+				{
+					rangeStart: 12 * H,
+					rangeEnd:   14 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block4, block5},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H},
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"level 2 blocks with ingestion replication factor 3": {
@@ -611,8 +663,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block3, block5}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block2, block4, block6}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block3, block5}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block2, block4, block6}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 			ingestionReplicationFactor: 3,
 		},
@@ -675,25 +727,50 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 12 * H, partitionCount: 4, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block3}},
-					{PartitionID: 1, Blocks: []ulid.ULID{block2, block3}},
-					{PartitionID: 2, Blocks: []ulid.ULID{block1, block3}},
-					{PartitionID: 3, Blocks: []ulid.ULID{block2, block3}},
-				}, partitionVisitMarkers: map[int]mockPartitionVisitMarker{
-					0: {partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
-					2: {partitionID: 2, compactorID: testCompactorID, isExpired: false, status: Completed},
-				}},
-				{rangeStart: 22 * H, rangeEnd: 24 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block6, block7}},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block3},
+						},
+						{
+							PartitionID: 1,
+							Blocks:      []ulid.ULID{block2, block3},
+						},
+						{
+							PartitionID: 2,
+							Blocks:      []ulid.ULID{block1, block3},
+						},
+						{
+							PartitionID: 3,
+							Blocks:      []ulid.ULID{block2, block3},
+						},
+					},
+					// V1 visit markers are ignored even though they are in complete status.
+					partitionVisitMarkersV1: map[int]mockPartitionVisitMarker{
+						0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+						2: {metricNamePartitionID: 0, partitionID: 2, compactorID: testCompactorID, isExpired: false, status: Completed},
+					},
+				},
+				{
+					rangeStart: 22 * H,
+					rangeEnd:   24 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block6, block7},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 22 * H, rangeEnd: 24 * H},
-				{blocks: []ulid.ULID{block1, block3}, partitionCount: 4, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block2, block3}, partitionCount: 4, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block1, block3}, partitionCount: 4, partitionID: 2, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block2, block3}, partitionCount: 4, partitionID: 3, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 22 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block3}, partitionCount: 4, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block2, block3}, partitionCount: 4, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block3}, partitionCount: 4, partitionID: 2, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block2, block3}, partitionCount: 4, partitionID: 3, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"level 2 blocks in first 12h are all complete, level 2 blocks in second 12h have not started compaction, there is no partitioned group file": {
@@ -756,8 +833,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H},
-				{blocks: []ulid.ULID{block1, block2, block3, block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 14 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block2, block3, block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"level 2 blocks are all complete, there is no partitioned group file": {
@@ -822,8 +899,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4, block5}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 12 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"level 2 blocks are complete only in second half of 12h, there is existing partitioned group file": {
@@ -887,19 +964,30 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 12 * H, partitionCount: 2, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2, block3, block4}},
-					{PartitionID: 1, Blocks: []ulid.ULID{block1, block2, block3, block4}},
-				}, partitionVisitMarkers: map[int]mockPartitionVisitMarker{
-					1: {partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2, block3, block4},
+						},
+						{
+							PartitionID: 1,
+							Blocks:      []ulid.ULID{block1, block2, block3, block4},
+						},
+					},
+					partitionVisitMarkersV1: map[int]mockPartitionVisitMarker{
+						1: {metricNamePartitionID: 0, partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
-		"level 3 blocks are complete, there are some level 2 blocks not deleted, there is existing partitioned group file": {
+		"level 3 blocks are complete, there are some level 2 blocks not deleted, there is existing partitioned group file, v1 visit marker causes re-compaction": {
 			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
 			blocks: map[ulid.ULID]mockBlock{
 				block1: {
@@ -960,11 +1048,114 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 12 * H, partitionCount: 1, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{block1, block2, block3, block4}},
-				}, partitionVisitMarkers: map[int]mockPartitionVisitMarker{
-					0: {partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block1, block2, block3, block4},
+						},
+					},
+					partitionVisitMarkersV1: map[int]mockPartitionVisitMarker{
+						0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+					},
+				},
+			},
+			expected: []expectedCompactionJob{
+				{
+					rangeStart:               0 * H,
+					rangeEnd:                 12 * H,
+					blocks:                   []ulid.ULID{block1, block2, block3, block4},
+					partitionCount:           1,
+					partitionID:              0,
+					metricNamePartitionCount: 1,
+					metricNamePartitionID:    0,
+				},
+			},
+		},
+		"level 3 blocks are complete, there are some level 2 blocks not deleted, there is existing partitioned group file, v2 visit marker": {
+			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 4 * H, MaxTime: 6 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 10 * H, MaxTime: 12 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 0 * H, MaxTime: 12 * H, Compaction: tsdb.BlockMetaCompaction{Level: 3}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        12 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 12 * H, MaxTime: 24 * H, Compaction: tsdb.BlockMetaCompaction{Level: 3}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 0}}},
+					},
+					timeRange:        12 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 12 * H, MaxTime: 24 * H, Compaction: tsdb.BlockMetaCompaction{Level: 3}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 1}}},
+					},
+					timeRange:        12 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			existingPartitionedGroups: []mockExistingPartitionedGroup{
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   12 * H,
+					metricNamePartitions: []MetricNamePartition{
+						{
+							MetricNamePartitionID: 0,
+							PartitionCount:        1,
+							Partitions: []Partition{
+								{
+									PartitionID: 0,
+									Blocks:      []ulid.ULID{block1, block2, block3, block4},
+								},
+							},
+						},
+					},
+					partitionVisitMarkersV2: map[int]map[int]mockPartitionVisitMarker{
+						0: {
+							0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{
 				// nothing should be grouped. cleaner should mark all level 2 blocks for deletion
@@ -999,7 +1190,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 2 blocks in same and different time range": {
@@ -1038,7 +1229,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 2 blocks all in different time range": {
@@ -1077,7 +1268,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 2 blocks and level 3 block": {
@@ -1124,7 +1315,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 1 block with level 2 blocks": {
@@ -1162,7 +1353,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with one level 3 block": {
@@ -1185,7 +1376,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 3 blocks": {
@@ -1216,7 +1407,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 1 block in same time range with level 3 blocks": {
@@ -1254,7 +1445,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 1 block in different time range with level 3 blocks": {
@@ -1292,7 +1483,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with one level 4 block": {
@@ -1315,7 +1506,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 4 blocks": {
@@ -1346,7 +1537,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 1 blocks in different time range with level 4 blocks": {
@@ -1384,7 +1575,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 2 block with level 3 blocks": {
@@ -1416,7 +1607,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 2 blocks from different time range with level 3 blocks": {
@@ -1456,7 +1647,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 2 blocks from same time range with level 3 blocks": {
@@ -1496,7 +1687,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 2 block with level 4 blocks": {
@@ -1528,7 +1719,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 2 blocks from different time range with level 4 blocks": {
@@ -1568,7 +1759,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 2 blocks from same time range with level 4 blocks": {
@@ -1608,7 +1799,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 3 block with level 4 blocks": {
@@ -1640,7 +1831,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 3 blocks from different time range with level 4 blocks": {
@@ -1680,7 +1871,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact two level 3 blocks from same time range with level 4 blocks": {
@@ -1720,7 +1911,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2, block3, block4}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"blocks with partition info should be assigned to correct partition": {
@@ -1784,8 +1975,342 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block3, block5, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
-				{blocks: []ulid.ULID{block2, block4, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block3, block5, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block2, block4, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+			},
+		},
+		"L1 blocks from Ingester have different metric name partition count from meta, all labels partition count set to 1 at L1 to L2 compaction": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 4,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 2}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 3}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 1, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block3, block5, block7}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 2},
+				{blocks: []ulid.ULID{block2, block4, block6, block7}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 2, metricNamePartitionID: 1},
+			},
+		},
+		"L1 blocks have different metric name partition count from meta, metricNamePartitionSeriesCount set to 0 so all labels partition count calculated": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 0,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 2}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 3}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 1, MetricNamePartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block2, block3, block4, block5, block6, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block1, block2, block3, block4, block5, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+			},
+		},
+		"blocks with only all label partitions should be assigned to correct partition, metric name partition limit configured but use 1 metric name partition count": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 4,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 4, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 4, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 4, PartitionID: 2}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 4, PartitionID: 3}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 4 * H, MaxTime: 6 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block3, block5, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block2, block4, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+			},
+		},
+		"blocks with metric name partitions should be assigned to correct partition, metric name partition limit configured, 12h range use largest metric name partition count 4": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 4,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 0, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 1, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 2, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4, MetricNamePartitionID: 3, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 1, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 4 * H, MaxTime: 6 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 1, MetricNamePartitionID: 0, PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block5, block7}, partitionCount: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 4},
+				{blocks: []ulid.ULID{block2, block6, block7}, partitionCount: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 4, metricNamePartitionID: 1},
+				{blocks: []ulid.ULID{block3, block5, block7}, partitionCount: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 4, metricNamePartitionID: 2},
+				{blocks: []ulid.ULID{block4, block6, block7}, partitionCount: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 4, metricNamePartitionID: 3},
+			},
+		},
+		"blocks with mixed metric name and all labels partitions should be assigned to correct partition, metric name partition limit configured": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 4,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0, PartitionCount: 2, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0, PartitionCount: 2, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 1, PartitionCount: 2, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block4: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block4, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 1, PartitionCount: 2, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block5: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block5, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block6: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block6, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block7: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block7, MinTime: 4 * H, MaxTime: 6 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 1}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block5, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 2},
+				{blocks: []ulid.ULID{block2, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 2},
+				{blocks: []ulid.ULID{block3, block5, block7}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 2, metricNamePartitionID: 1},
+				{blocks: []ulid.ULID{block4, block6, block7}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 2, metricNamePartitionID: 1},
 			},
 		},
 		"one of the partitions got only one block": {
@@ -1817,11 +2342,47 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H},
-				{blocks: []ulid.ULID{block3, DUMMY_BLOCK_ID}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 2 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 2, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
+				{blocks: []ulid.ULID{block3, DUMMY_BLOCK_ID}, partitionCount: 2, partitionID: 1, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 1},
 			},
 		},
-		"not all level 2 blocks are in bucket index": {
+		"one of the partitions got only one block when metric name partition is set": {
+			ranges:                         []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			metricNamePartitionSeriesCount: 4,
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0, PartitionCount: 2, PartitionID: 0}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}, Stats: tsdb.BlockStats{NumSeries: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2, MetricNamePartitionID: 0, PartitionCount: 2, PartitionID: 1}}, Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}, Stats: tsdb.BlockStats{NumSeries: 2}},
+						Thanos:    metadata.Thanos{Files: []metadata.File{{RelPath: thanosblock.IndexFilename, SizeBytes: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 2},
+				{blocks: []ulid.ULID{block3, DUMMY_BLOCK_ID}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 2 * H, metricNamePartitionCount: 2, metricNamePartitionID: 1},
+			},
+		},
+		// Even though the existing visit marker shows completed. The partition will still be compacted but
+		// couldn't generate job since block don’t exist in bucket index.
+		"not all level 2 blocks are in bucket index, with v1 partition visit marker": {
 			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
 			blocks: map[ulid.ULID]mockBlock{
 				block1: {
@@ -1842,17 +2403,80 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 2 * H, partitionCount: 2, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{ulid.MustNew(99, nil), ulid.MustNew(98, nil)}},
-					{PartitionID: 1, Blocks: []ulid.ULID{ulid.MustNew(99, nil), ulid.MustNew(98, nil)}},
-				}, partitionVisitMarkers: map[int]mockPartitionVisitMarker{
-					0: {partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
-					1: {partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+						{
+							PartitionID: 1,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+					},
+					// V1 visit markers are ignored even though they are in completed status.
+					partitionVisitMarkersV1: map[int]mockPartitionVisitMarker{
+						0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+						1: {metricNamePartitionID: 0, partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{},
 		},
-		"not all level 2 blocks are in bucket index and there are late level 1 blocks": {
+		// This test case doesn't even generate partitioned group since the existing partition already completed.
+		"not all level 2 blocks are in bucket index, with v2 partition visit marker": {
+			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 2 * H, MaxTime: 4 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 1, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			existingPartitionedGroups: []mockExistingPartitionedGroup{
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					metricNamePartitions: []MetricNamePartition{
+						{
+							MetricNamePartitionID: 0,
+							PartitionCount:        2,
+							Partitions: []Partition{
+								{
+									PartitionID: 0,
+									Blocks:      []ulid.ULID{block99, block98},
+								},
+								{
+									PartitionID: 1,
+									Blocks:      []ulid.ULID{block99, block98},
+								},
+							},
+						},
+					},
+					partitionVisitMarkersV2: map[int]map[int]mockPartitionVisitMarker{
+						0: {
+							0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+							1: {metricNamePartitionID: 0, partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
+						},
+					},
+				},
+			},
+			expected: []expectedCompactionJob{},
+		},
+		"not all level 2 blocks are in bucket index and there are late level 1 blocks, with v1 partition visit marker": {
 			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
 			blocks: map[ulid.ULID]mockBlock{
 				block1: {
@@ -1879,13 +2503,75 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{
-				{rangeStart: 0 * H, rangeEnd: 2 * H, partitionCount: 2, partitions: []Partition{
-					{PartitionID: 0, Blocks: []ulid.ULID{ulid.MustNew(99, nil), ulid.MustNew(98, nil)}},
-					{PartitionID: 1, Blocks: []ulid.ULID{ulid.MustNew(99, nil), ulid.MustNew(98, nil)}},
-				}, partitionVisitMarkers: map[int]mockPartitionVisitMarker{
-					0: {partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
-					1: {partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
-				}},
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+						{
+							PartitionID: 1,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+					},
+					// V1 visit markers are ignored even though they are in completed status.
+					partitionVisitMarkersV1: map[int]mockPartitionVisitMarker{
+						0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+						1: {metricNamePartitionID: 0, partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
+					},
+				},
+			},
+			expected: []expectedCompactionJob{},
+		},
+		"not all level 2 blocks are in bucket index and there are late level 1 blocks, with v2 partition visit marker": {
+			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionCount: 2, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block3: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block3, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 1}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			existingPartitionedGroups: []mockExistingPartitionedGroup{
+				{
+					rangeStart: 0 * H,
+					rangeEnd:   2 * H,
+					partitions: []Partition{
+						{
+							PartitionID: 0,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+						{
+							PartitionID: 1,
+							Blocks:      []ulid.ULID{block99, block98},
+						},
+					},
+					partitionVisitMarkersV2: map[int]map[int]mockPartitionVisitMarker{
+						0: {
+							0: {metricNamePartitionID: 0, partitionID: 0, compactorID: testCompactorID, isExpired: true, status: Completed},
+							1: {metricNamePartitionID: 0, partitionID: 1, compactorID: testCompactorID, isExpired: true, status: Completed},
+						},
+					},
+				},
 			},
 			expected: []expectedCompactionJob{},
 		},
@@ -1965,7 +2651,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			},
 			existingPartitionedGroups: []mockExistingPartitionedGroup{},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2, block3}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 4 blocks with data only in part of time range across smaller time range": {
@@ -1988,7 +2674,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 4 blocks with time range in meta and data only in part of time range in same smaller time range": {
@@ -2011,7 +2697,7 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 		"recompact one level 1 block with level 4 blocks with no time range in meta and data only in part of time range in same smaller time range": {
@@ -2034,7 +2720,55 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				},
 			},
 			expected: []expectedCompactionJob{
-				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H},
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+			},
+		},
+		"l2 blocks with mixed metadata versions trigger compaction even though partition group ID same as destination group ID": {
+			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionedGroupID: partitionedGroupID_0_12, PartitionCount: 2, PartitionID: 0}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 2 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{Version: 1, PartitionInfo: &cortextsdb.PartitionInfo{PartitionedGroupID: partitionedGroupID_0_12, PartitionCount: 2, PartitionID: 1}}},
+					},
+					timeRange:        2 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 12 * H, metricNamePartitionCount: 1},
+			},
+		},
+		"l3 blocks with mixed metadata versions trigger compaction even though partition group ID same as destination group ID": {
+			ranges: []time.Duration{2 * time.Hour, 12 * time.Hour, 24 * time.Hour},
+			blocks: map[ulid.ULID]mockBlock{
+				block1: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block1, MinTime: 0 * H, MaxTime: 12 * H, Compaction: tsdb.BlockMetaCompaction{Level: 3}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{PartitionedGroupID: partitionedGroupID_0_24, PartitionCount: 2, PartitionID: 0}}},
+					},
+					timeRange:        12 * time.Hour,
+					hasNoCompactMark: false,
+				},
+				block2: {
+					meta: &metadata.Meta{
+						BlockMeta: tsdb.BlockMeta{ULID: block2, MinTime: 0 * H, MaxTime: 12 * H, Compaction: tsdb.BlockMetaCompaction{Level: 2}},
+						Thanos:    metadata.Thanos{Extensions: cortextsdb.CortexMetaExtensions{Version: 1, PartitionInfo: &cortextsdb.PartitionInfo{PartitionedGroupID: partitionedGroupID_0_24, PartitionCount: 2, PartitionID: 1}}},
+					},
+					timeRange:        12 * time.Hour,
+					hasNoCompactMark: false,
+				},
+			},
+			expected: []expectedCompactionJob{
+				{blocks: []ulid.ULID{block1, block2}, partitionCount: 1, partitionID: 0, rangeStart: 0 * H, rangeEnd: 24 * H, metricNamePartitionCount: 1},
 			},
 		},
 	}
@@ -2046,7 +2780,8 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 			}
 
 			limits := &validation.Limits{
-				CompactorPartitionSeriesCount: 4,
+				CompactorPartitionSeriesCount:                4,
+				CompactorMetricNamePartitionSeriesCountLimit: testCase.metricNamePartitionSeriesCount,
 			}
 			overrides := validation.NewOverrides(*limits, nil)
 
@@ -2119,7 +2854,9 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 				actualBlocks := actualGroup.blocks
 				require.Equal(t, expectedGroup.rangeStart, actualGroup.partitionedGroupInfo.RangeStart)
 				require.Equal(t, expectedGroup.rangeEnd, actualGroup.partitionedGroupInfo.RangeEnd)
-				require.Equal(t, expectedGroup.partitionCount, actualGroup.partitionedGroupInfo.PartitionCount)
+				require.Equal(t, expectedGroup.metricNamePartitionCount, actualGroup.partitionedGroupInfo.MetricNamePartitionCount)
+				require.Equal(t, expectedGroup.metricNamePartitionID, actualGroup.metricNamePartitionID)
+				require.Equal(t, expectedGroup.partitionCount, actualGroup.partitionedGroupInfo.MetricNamePartitions[actualGroup.metricNamePartitionID].PartitionCount)
 				require.Equal(t, expectedGroup.partitionID, actualGroup.partition.PartitionID)
 				require.Len(t, actualBlocks, len(expectedGroup.blocks))
 				for _, b := range actualBlocks {
@@ -2131,11 +2868,12 @@ func TestPartitionCompactionGrouper_GenerateCompactionJobs(t *testing.T) {
 }
 
 type generateCompactionJobsTestCase struct {
-	ranges                     []time.Duration
-	blocks                     map[ulid.ULID]mockBlock
-	existingPartitionedGroups  []mockExistingPartitionedGroup
-	expected                   []expectedCompactionJob
-	ingestionReplicationFactor int
+	ranges                         []time.Duration
+	blocks                         map[ulid.ULID]mockBlock
+	existingPartitionedGroups      []mockExistingPartitionedGroup
+	expected                       []expectedCompactionJob
+	ingestionReplicationFactor     int
+	metricNamePartitionSeriesCount int64
 }
 
 func (g *generateCompactionJobsTestCase) setupBucketStore(t *testing.T, bkt *bucket.ClientMock, userID string, visitMarkerTimeout time.Duration) {
@@ -2171,27 +2909,73 @@ func (g *generateCompactionJobsTestCase) getBlocks() map[ulid.ULID]*metadata.Met
 }
 
 type mockExistingPartitionedGroup struct {
-	partitionedGroupID    uint32
-	rangeStart            int64
-	rangeEnd              int64
-	partitionCount        int
-	partitions            []Partition
-	partitionVisitMarkers map[int]mockPartitionVisitMarker
+	partitionedGroupID      uint32
+	rangeStart              int64
+	rangeEnd                int64
+	partitions              []Partition
+	metricNamePartitions    []MetricNamePartition
+	partitionVisitMarkersV1 map[int]mockPartitionVisitMarker
+	partitionVisitMarkersV2 map[int]map[int]mockPartitionVisitMarker
+	version                 int
 }
 
 func (p *mockExistingPartitionedGroup) updatePartitionedGroupID(userID string) {
 	p.partitionedGroupID = hashGroup(userID, p.rangeStart, p.rangeEnd)
 }
 
-func (p *mockExistingPartitionedGroup) setupBucketStore(t *testing.T, bkt *bucket.ClientMock, userID string, visitMarkerTimeout time.Duration) string {
-	p.updatePartitionedGroupID(userID)
-	partitionedGroupFilePath := path.Join(PartitionedGroupDirectory, fmt.Sprintf("%d.json", p.partitionedGroupID))
-	for _, partition := range p.partitions {
-		partitionID := partition.PartitionID
-		if _, ok := p.partitionVisitMarkers[partitionID]; !ok {
+func (p *mockExistingPartitionedGroup) setupBucketStorePartitionedGroupV2(t *testing.T, bkt *bucket.ClientMock, visitMarkerTimeout time.Duration) ([]byte, error) {
+	for _, metricNamePartition := range p.metricNamePartitions {
+		metricNamePartitionID := metricNamePartition.MetricNamePartitionID
+		if _, ok := p.partitionVisitMarkersV2[metricNamePartitionID]; !ok {
 			continue
 		}
-		visitMarker := p.partitionVisitMarkers[partitionID]
+		for _, partition := range metricNamePartition.Partitions {
+			partitionID := partition.PartitionID
+			if _, ok := p.partitionVisitMarkersV2[metricNamePartitionID][partitionID]; !ok {
+				continue
+			}
+			visitMarker := p.partitionVisitMarkersV2[metricNamePartitionID][partitionID]
+			partitionVisitMarkerFilePath := path.Join(PartitionedGroupDirectory, PartitionVisitMarkerDirectory,
+				fmt.Sprintf("%d/%s-%d-%d-%s", p.partitionedGroupID, PartitionVisitMarkerFilePrefix, metricNamePartitionID, partitionID, PartitionVisitMarkerFileSuffix))
+			visitTime := time.Now()
+			if visitMarker.isExpired {
+				visitTime = time.Now().Add(-2 * visitMarkerTimeout)
+			}
+			visitMarkerWithMetricNamePartition := PartitionVisitMarkerWithMetricNamePartition{
+				CompactorID:           visitMarker.compactorID,
+				Status:                visitMarker.status,
+				PartitionedGroupID:    p.partitionedGroupID,
+				PartitionID:           partitionID,
+				VisitTime:             visitTime.UnixMilli(),
+				Version:               PartitionVisitMarkerVersion1,
+				MetricNamePartitionID: metricNamePartitionID,
+			}
+			partitionVisitMarkerContent, err := json.Marshal(visitMarkerWithMetricNamePartition)
+			require.NoError(t, err)
+			bkt.MockGet(partitionVisitMarkerFilePath, string(partitionVisitMarkerContent), nil)
+		}
+	}
+
+	partitionedGroup := PartitionedGroupInfo{
+		PartitionedGroupID:       p.partitionedGroupID,
+		MetricNamePartitionCount: len(p.metricNamePartitions),
+		MetricNamePartitions:     p.metricNamePartitions,
+		RangeStart:               p.rangeStart,
+		RangeEnd:                 p.rangeEnd,
+		CreationTime:             time.Now().Add(-time.Minute).Unix(),
+		Version:                  PartitionedGroupInfoVersion2,
+	}
+	return json.Marshal(partitionedGroup)
+}
+
+func (p *mockExistingPartitionedGroup) setupBucketStorePartitionedGroupV1(t *testing.T, bkt *bucket.ClientMock, visitMarkerTimeout time.Duration) ([]byte, error) {
+	for _, partition := range p.partitions {
+		partitionID := partition.PartitionID
+
+		if _, ok := p.partitionVisitMarkersV1[partitionID]; !ok {
+			continue
+		}
+		visitMarker := p.partitionVisitMarkersV1[partitionID]
 		partitionVisitMarkerFilePath := path.Join(PartitionedGroupDirectory, PartitionVisitMarkerDirectory,
 			fmt.Sprintf("%d/%s%d-%s", p.partitionedGroupID, PartitionVisitMarkerFilePrefix, partitionID, PartitionVisitMarkerFileSuffix))
 		visitTime := time.Now()
@@ -2210,16 +2994,36 @@ func (p *mockExistingPartitionedGroup) setupBucketStore(t *testing.T, bkt *bucke
 		require.NoError(t, err)
 		bkt.MockGet(partitionVisitMarkerFilePath, string(partitionVisitMarkerContent), nil)
 	}
-	partitionedGroup := PartitionedGroupInfo{
+
+	partitionedGroup := PartitionedGroupInfoV1{
 		PartitionedGroupID: p.partitionedGroupID,
-		PartitionCount:     p.partitionCount,
+		PartitionCount:     len(p.partitions),
 		Partitions:         p.partitions,
 		RangeStart:         p.rangeStart,
 		RangeEnd:           p.rangeEnd,
-		CreationTime:       time.Now().Add(-1 * time.Minute).Unix(),
+		CreationTime:       time.Now().Add(-time.Minute).Unix(),
 		Version:            PartitionedGroupInfoVersion1,
 	}
-	partitionedGroupContent, err := json.Marshal(partitionedGroup)
+	return json.Marshal(partitionedGroup)
+}
+
+func (p *mockExistingPartitionedGroup) setupBucketStore(t *testing.T, bkt *bucket.ClientMock, userID string, visitMarkerTimeout time.Duration) string {
+	p.updatePartitionedGroupID(userID)
+	partitionedGroupFilePath := path.Join(PartitionedGroupDirectory, fmt.Sprintf("%d.json", p.partitionedGroupID))
+	var (
+		partitionedGroupContent []byte
+		err                     error
+	)
+
+	switch p.version {
+	case PartitionedGroupInfoVersion2:
+		partitionedGroupContent, err = p.setupBucketStorePartitionedGroupV2(t, bkt, visitMarkerTimeout)
+
+	default:
+		// Default case version 1.
+		partitionedGroupContent, err = p.setupBucketStorePartitionedGroupV1(t, bkt, visitMarkerTimeout)
+	}
+
 	require.NoError(t, err)
 	bkt.MockGet(partitionedGroupFilePath, string(partitionedGroupContent), nil)
 	return partitionedGroupFilePath
@@ -2237,7 +3041,8 @@ func (b *mockBlock) fixPartitionInfo(t *testing.T, userID string) {
 	if extensions != nil {
 		rangeStart := getRangeStart(b.meta, b.timeRange.Milliseconds())
 		rangeEnd := rangeStart + b.timeRange.Milliseconds()
-		if extensions.PartitionInfo.PartitionedGroupID == 0 {
+		// Only set partitioned group ID if L2+ block.
+		if b.meta.Compaction.Level > 1 && extensions.PartitionInfo.PartitionedGroupID == 0 {
 			extensions.PartitionInfo.PartitionedGroupID = hashGroup(userID, rangeStart, rangeEnd)
 		}
 		b.meta.Thanos.Extensions = extensions
@@ -2245,16 +3050,176 @@ func (b *mockBlock) fixPartitionInfo(t *testing.T, userID string) {
 }
 
 type mockPartitionVisitMarker struct {
-	partitionID int
-	compactorID string
-	isExpired   bool
-	status      VisitStatus
+	metricNamePartitionID int
+	partitionID           int
+	compactorID           string
+	isExpired             bool
+	status                VisitStatus
 }
 
 type expectedCompactionJob struct {
-	blocks         []ulid.ULID
-	partitionCount int
-	partitionID    int
-	rangeStart     int64
-	rangeEnd       int64
+	blocks                   []ulid.ULID
+	partitionCount           int
+	partitionID              int
+	metricNamePartitionCount int
+	metricNamePartitionID    int
+	rangeStart               int64
+	rangeEnd                 int64
+}
+
+func TestCalculateMetricNamePartitionCount(t *testing.T) {
+	logger := log.NewNopLogger()
+	for _, tc := range []struct {
+		name             string
+		seriesCountLimit int64
+		blocks           blocksGroupWithPartition
+		expectedCount    int
+	}{
+		{
+			name:             "no block",
+			seriesCountLimit: 1,
+			blocks:           blocksGroupWithPartition{},
+			expectedCount:    1,
+		},
+		{
+			name:             "0 limit",
+			seriesCountLimit: 0,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name:             "L1 to L2 compaction, 1 block with 5 series",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 5}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name:             "L1 to L2 compaction, 1 block with 30 series",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 4,
+		},
+		{
+			name:             "L1 to L2 compaction, 1 block with 100 series",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 100}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 16,
+		},
+		{
+			name:             "L1 to L2 compaction, multiple blocks",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}}},
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 20}}},
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 10}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 8,
+		},
+		{
+			name:             "L2+ compaction, single block, use largest value from block",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{
+							BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}},
+							Thanos:    metadata.Thanos{Extensions: &cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2}}},
+						},
+					},
+					rangeStart: 0,
+					rangeEnd:   2 * time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 2,
+		},
+		{
+			name:             "L2+ compaction, multiple blocks, use largest value from block",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{
+							BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}},
+							Thanos:    metadata.Thanos{Extensions: &cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 2}}},
+						},
+						{
+							BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}},
+							Thanos:    metadata.Thanos{Extensions: &cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 4}}},
+						},
+						{
+							BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}},
+							Thanos:    metadata.Thanos{Extensions: &cortextsdb.CortexMetaExtensions{PartitionInfo: &cortextsdb.PartitionInfo{MetricNamePartitionCount: 8}}},
+						},
+					},
+					rangeStart: 0,
+					rangeEnd:   2 * time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 8,
+		},
+		{
+			name:             "L2+ compaction, multiple blocks but no metric name partition count set, use default value 1",
+			seriesCountLimit: 10,
+			blocks: blocksGroupWithPartition{
+				blocksGroup: blocksGroup{
+					blocks: []*metadata.Meta{
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 30}}},
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 20}}},
+						{BlockMeta: tsdb.BlockMeta{Stats: tsdb.BlockStats{NumSeries: 10}}},
+					},
+					rangeStart: 0,
+					rangeEnd:   2 * time.Minute.Milliseconds(),
+				},
+			},
+			expectedCount: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			limits := validation.Limits{
+				CompactorMetricNamePartitionSeriesCountLimit: tc.seriesCountLimit,
+			}
+			overrides := validation.NewOverrides(limits, nil)
+			g := PartitionCompactionGrouper{logger: logger, limits: overrides, compactorCfg: Config{BlockRanges: cortextsdb.DurationList{time.Minute}}}
+			actual := g.calculateMetricNamePartitionCount(tc.blocks, uint32(1))
+			require.Equal(t, tc.expectedCount, actual)
+		})
+	}
 }

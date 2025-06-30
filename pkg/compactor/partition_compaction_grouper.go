@@ -171,7 +171,7 @@ func (g *PartitionCompactionGrouper) generateCompactionJobs(blocks map[ulid.ULID
 	var blockIDs []string
 	for _, p := range existingPartitionedGroups {
 		blockIDs = p.getAllBlockIDs()
-		level.Info(g.logger).Log("msg", "existing partitioned group", "partitioned_group_id", p.PartitionedGroupID, "partition_count", p.PartitionCount, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
+		level.Info(g.logger).Log("msg", "existing partitioned group", "partitioned_group_id", p.PartitionedGroupID, "metric_name_partition_count", p.MetricNamePartitionCount, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
 	}
 
 	allPartitionedGroup, err := g.generatePartitionedGroups(blocks, groups, existingPartitionedGroups, timeRanges)
@@ -181,13 +181,13 @@ func (g *PartitionCompactionGrouper) generateCompactionJobs(blocks map[ulid.ULID
 	g.sortPartitionedGroups(allPartitionedGroup)
 	for _, p := range allPartitionedGroup {
 		blockIDs = p.getAllBlockIDs()
-		level.Info(g.logger).Log("msg", "partitioned group ready for compaction", "partitioned_group_id", p.PartitionedGroupID, "partition_count", p.PartitionCount, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
+		level.Info(g.logger).Log("msg", "partitioned group ready for compaction", "partitioned_group_id", p.PartitionedGroupID, "metric_name_partition_count", p.MetricNamePartitionCount, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
 	}
 
 	partitionCompactionJobs := g.generatePartitionCompactionJobs(blocks, allPartitionedGroup, g.doRandomPick)
 	for _, p := range partitionCompactionJobs {
 		blockIDs = p.getBlockIDs()
-		level.Info(g.logger).Log("msg", "partitioned compaction job", "partitioned_group_id", p.partitionedGroupInfo.PartitionedGroupID, "partition_id", p.partition.PartitionID, "partition_count", p.partitionedGroupInfo.PartitionCount, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
+		level.Info(g.logger).Log("msg", "partitioned compaction job", "partitioned_group_id", p.partitionedGroupInfo.PartitionedGroupID, "metric_name_partition_count", p.partitionedGroupInfo.MetricNamePartitionCount, "metric_partition_id", p.metricNamePartitionID, "partition_count", p.partitionedGroupInfo.MetricNamePartitions[p.metricNamePartitionID].PartitionCount, "partition_id", p.partition.PartitionID, "rangeStart", p.rangeStartTime().String(), "rangeEnd", p.rangeEndTime().String(), "blocks", strings.Join(blockIDs, ","))
 	}
 	return partitionCompactionJobs, nil
 }
@@ -196,7 +196,7 @@ func (g *PartitionCompactionGrouper) loadExistingPartitionedGroups() (map[uint32
 	partitionedGroups := make(map[uint32]*PartitionedGroupInfo)
 	err := g.bkt.Iter(g.ctx, PartitionedGroupDirectory, func(file string) error {
 		if !strings.Contains(file, PartitionVisitMarkerDirectory) {
-			partitionedGroup, err := ReadPartitionedGroupInfoFile(g.ctx, g.bkt, g.logger, file)
+			partitionedGroup, _, err := ReadPartitionedGroupInfoFile(g.ctx, g.bkt, g.logger, file)
 			if err != nil {
 				return err
 			}
@@ -377,10 +377,17 @@ func (g *PartitionCompactionGrouper) shouldSkipGroup(logger log.Logger, group bl
 		return true
 	}
 
+	lastVersion := -1
 	// Check if all blocks in group having same partitioned group id as destination partitionedGroupID
 	for _, b := range group.blocks {
-		partitionInfo, err := tsdb.GetPartitionInfo(*b)
-		if err != nil || partitionInfo == nil || partitionInfo.PartitionedGroupID != partitionedGroupID {
+		metaExtensions, err := tsdb.GetCortexMetaExtensionsFromMeta(*b)
+		if err != nil || metaExtensions == nil || metaExtensions.PartitionInfo == nil || metaExtensions.PartitionInfo.PartitionedGroupID != partitionedGroupID {
+			return false
+		}
+		// If group blocks have mixed versions, don't skip group.
+		if lastVersion == -1 {
+			lastVersion = metaExtensions.Version
+		} else if lastVersion != metaExtensions.Version {
 			return false
 		}
 	}
@@ -401,42 +408,58 @@ func (g *PartitionCompactionGrouper) generatePartitionBlockGroup(group blocksGro
 }
 
 func (g *PartitionCompactionGrouper) partitionBlockGroup(group blocksGroupWithPartition, groupHash uint32) (*PartitionedGroupInfo, error) {
-	partitionCount := g.calculatePartitionCount(group, groupHash)
-	blocksByMinTime := g.groupBlocksByMinTime(group)
-	partitionedGroups, err := g.partitionBlocksGroup(partitionCount, blocksByMinTime, group.rangeStart, group.rangeEnd)
+	metricNamePartitionCount := g.calculateMetricNamePartitionCount(group, groupHash)
+	partitionedGroups, err := g.partitionBlocksGroup(metricNamePartitionCount, group, groupHash)
 	if err != nil {
 		return nil, err
 	}
 
-	partitions := make([]Partition, partitionCount)
-	for partitionID := 0; partitionID < partitionCount; partitionID++ {
-		partitionedGroup := partitionedGroups[partitionID]
-		blockIDs := make([]ulid.ULID, len(partitionedGroup.blocks))
-		for i, m := range partitionedGroup.blocks {
-			blockIDs[i] = m.ULID
+	metricNamePartitions := make([]MetricNamePartition, len(partitionedGroups))
+	for i, metricNamePartitionedGroup := range partitionedGroups {
+		metricNamePartitions[i] = MetricNamePartition{
+			MetricNamePartitionID: i,
+			PartitionCount:        len(metricNamePartitionedGroup),
 		}
-		partitions[partitionID] = Partition{
-			PartitionID: partitionID,
-			Blocks:      blockIDs,
+		metricNamePartitions[i].Partitions = make([]Partition, metricNamePartitions[i].PartitionCount)
+		for j, blockIDs := range metricNamePartitionedGroup {
+			metricNamePartitions[i].Partitions[j] = Partition{
+				PartitionID: j,
+				Blocks:      blockIDs,
+			}
 		}
 	}
+
 	partitionedGroupInfo := PartitionedGroupInfo{
-		PartitionedGroupID: groupHash,
-		PartitionCount:     partitionCount,
-		Partitions:         partitions,
-		RangeStart:         group.rangeStart,
-		RangeEnd:           group.rangeEnd,
-		Version:            PartitionedGroupInfoVersion1,
+		PartitionedGroupID:       groupHash,
+		MetricNamePartitionCount: metricNamePartitionCount,
+		MetricNamePartitions:     metricNamePartitions,
+		RangeStart:               group.rangeStart,
+		RangeEnd:                 group.rangeEnd,
+		Version:                  PartitionedGroupInfoVersion2,
 	}
 	return &partitionedGroupInfo, nil
 }
 
-func (g *PartitionCompactionGrouper) calculatePartitionCount(group blocksGroupWithPartition, groupHash uint32) int {
+func (g *PartitionCompactionGrouper) calculatePartitionCount(group blocksGroupWithPartition, groupHash uint32, metricNamePartitionCount, metricNamePartitionID int) int {
 	indexSizeLimit := g.limits.CompactorPartitionIndexSizeBytes(g.userID)
+	oldIndexSizeLimit := g.limits.CompactorPartitionIndexSizeLimitInBytes(g.userID)
+	if indexSizeLimit == 0 || oldIndexSizeLimit > 0 && indexSizeLimit > oldIndexSizeLimit {
+		indexSizeLimit = oldIndexSizeLimit
+	}
 	seriesCountLimit := g.limits.CompactorPartitionSeriesCount(g.userID)
+	oldSeriesCountLimit := g.limits.CompactorPartitionSeriesCountLimit(g.userID)
+	if seriesCountLimit == 0 || oldSeriesCountLimit > 0 && seriesCountLimit > oldSeriesCountLimit {
+		seriesCountLimit = oldSeriesCountLimit
+	}
+	metricNamePartitionSeriesCountLimit := g.limits.CompactorMetricNamePartitionSeriesCountLimit(g.userID)
 	smallestRange := g.compactorCfg.BlockRanges.ToMilliseconds()[0]
 	groupRange := group.rangeLength()
 	if smallestRange >= groupRange {
+		// Level 1 to Level 2 compaction, ignore all labels partition if metric name partition is enabled.
+		if metricNamePartitionSeriesCountLimit > 0 {
+			level.Info(g.logger).Log("msg", "metric name partition enabled at level 1 to level 2 block compaction, set partition count to 1", "partitioned_group_id", groupHash, "smallestRange", smallestRange, "groupRange", groupRange, "metric_name_series_count_limit", metricNamePartitionSeriesCountLimit)
+			return 1
+		}
 		level.Info(g.logger).Log("msg", "calculate level 1 block limits", "partitioned_group_id", groupHash, "smallest_range", smallestRange, "group_range", groupRange, "ingestion_replication_factor", g.ingestionReplicationFactor)
 		indexSizeLimit = indexSizeLimit * int64(g.ingestionReplicationFactor)
 		seriesCountLimit = seriesCountLimit * int64(g.ingestionReplicationFactor)
@@ -472,7 +495,42 @@ func (g *PartitionCompactionGrouper) calculatePartitionCount(group blocksGroupWi
 	if partitionNumberBasedOnSeries > partitionNumberBasedOnIndex {
 		partitionNumber = partitionNumberBasedOnSeries
 	}
-	level.Info(g.logger).Log("msg", "calculated partition number for group", "partitioned_group_id", groupHash, "partition_number", partitionNumber, "total_index_size", totalIndexSizeInBytes, "index_size_limit", indexSizeLimit, "total_series_count", totalSeriesCount, "series_count_limit", seriesCountLimit, "group", group.String())
+	level.Info(g.logger).Log("msg", "calculated partition number for group", "partitioned_group_id", groupHash, "partition_number", partitionNumber, "metric_name_partition_count", metricNamePartitionCount, "metric_name_partition_id", metricNamePartitionID, "total_index_size", totalIndexSizeInBytes, "index_size_limit", indexSizeLimit, "total_series_count", totalSeriesCount, "series_count_limit", seriesCountLimit, "group", group.String())
+	return partitionNumber
+}
+
+func (g *PartitionCompactionGrouper) calculateMetricNamePartitionCount(group blocksGroupWithPartition, groupHash uint32) int {
+	smallestRange := g.compactorCfg.BlockRanges.ToMilliseconds()[0]
+	groupRange := group.rangeLength()
+	partitionNumber := 1
+	seriesCountLimit := g.limits.CompactorMetricNamePartitionSeriesCountLimit(g.userID)
+	var totalSeriesCount int64
+	if seriesCountLimit > 0 {
+		if smallestRange < groupRange {
+			for _, block := range group.blocks {
+				block := block
+				partitionInfo, err := tsdb.GetPartitionInfo(*block)
+				if err != nil {
+					continue
+				}
+				if partitionInfo != nil {
+					// Find the largest metric name partition count from the block group if exists.
+					if partitionInfo.MetricNamePartitionCount > partitionNumber {
+						partitionNumber = partitionInfo.MetricNamePartitionCount
+					}
+				}
+			}
+		} else {
+			// Level 1 to Level 2 compaction.
+			for _, block := range group.blocks {
+				totalSeriesCount += int64(block.Stats.NumSeries)
+			}
+			if totalSeriesCount > seriesCountLimit {
+				partitionNumber = g.findNearestPartitionNumber(float64(totalSeriesCount), float64(seriesCountLimit))
+			}
+		}
+	}
+	level.Info(g.logger).Log("msg", "calculated metric name partition number for group", "partitioned_group_id", groupHash, "smallestRange", smallestRange, "groupRange", groupRange, "partition_number", partitionNumber, "total_series_count", totalSeriesCount, "metric_name_series_count_limit", seriesCountLimit, "group", group.String())
 	return partitionNumber
 }
 
@@ -496,43 +554,95 @@ func (g *PartitionCompactionGrouper) groupBlocksByMinTime(group blocksGroupWithP
 	return blocksByMinTime
 }
 
-func (g *PartitionCompactionGrouper) partitionBlocksGroup(partitionCount int, blocksByMinTime map[int64][]*metadata.Meta, rangeStart int64, rangeEnd int64) (map[int]blocksGroupWithPartition, error) {
-	partitionedGroups := make(map[int]blocksGroupWithPartition)
-	addToPartitionedGroups := func(blocks []*metadata.Meta, partitionID int) {
-		if _, ok := partitionedGroups[partitionID]; !ok {
-			partitionedGroups[partitionID] = blocksGroupWithPartition{
-				blocksGroup: blocksGroup{
-					rangeStart: rangeStart,
-					rangeEnd:   rangeEnd,
-					blocks:     []*metadata.Meta{},
-				},
-			}
+func (g *PartitionCompactionGrouper) partitionBlocksGroup(metricNamePartitionCount int, group blocksGroupWithPartition, groupHash uint32) ([][][]ulid.ULID, error) {
+	blocksByMinTime := g.groupBlocksByMinTime(group)
+	metricNamePartitionedGroups := make([][]*metadata.Meta, metricNamePartitionCount)
+	partitionedGroups := make([][][]ulid.ULID, metricNamePartitionCount)
+	addToPartitionedGroups := func(block ulid.ULID, metricNamePartitionID, partitionCount, partitionID int) {
+		if len(partitionedGroups[metricNamePartitionID]) == 0 {
+			partitionedGroups[metricNamePartitionID] = make([][]ulid.ULID, partitionCount)
 		}
-		partitionedGroup := partitionedGroups[partitionID]
-		partitionedGroup.blocks = append(partitionedGroup.blocks, blocks...)
-		partitionedGroups[partitionID] = partitionedGroup
+		if len(partitionedGroups[metricNamePartitionID][partitionID]) == 0 {
+			partitionedGroups[metricNamePartitionID][partitionID] = make([]ulid.ULID, 0)
+		}
+
+		partitionedGroups[metricNamePartitionID][partitionID] = append(partitionedGroups[metricNamePartitionID][partitionID], block)
+	}
+
+	getMetricNamePartitionIDs := func(partitionInfo *tsdb.PartitionInfo) []int {
+		output := make([]int, 0)
+		if partitionInfo.MetricNamePartitionCount < metricNamePartitionCount {
+			for partitionID := partitionInfo.MetricNamePartitionID; partitionID < metricNamePartitionCount; partitionID += partitionInfo.MetricNamePartitionCount {
+				output = append(output, partitionID)
+			}
+		} else if partitionInfo.MetricNamePartitionCount == metricNamePartitionCount {
+			output = append(output, partitionInfo.MetricNamePartitionID)
+		} else {
+			output = append(output, partitionInfo.MetricNamePartitionID%metricNamePartitionCount)
+		}
+		return output
+	}
+
+	getPartitionIDs := func(partitionInfo *tsdb.PartitionInfo, partitionCount int) []int {
+		output := make([]int, 0)
+		if partitionInfo.PartitionCount < partitionCount {
+			for partitionID := partitionInfo.PartitionID; partitionID < partitionCount; partitionID += partitionInfo.PartitionCount {
+				output = append(output, partitionID)
+			}
+		} else if partitionInfo.PartitionCount == partitionCount {
+			output = append(output, partitionInfo.PartitionID)
+		} else {
+			output = append(output, partitionInfo.PartitionID%partitionCount)
+		}
+		return output
 	}
 
 	for _, blocksInSameTimeInterval := range blocksByMinTime {
 		for _, block := range blocksInSameTimeInterval {
+			block := block
 			partitionInfo, err := tsdb.GetPartitionInfo(*block)
 			if err != nil {
 				return nil, err
 			}
-			if partitionInfo == nil || partitionInfo.PartitionCount < 1 {
+			if partitionInfo == nil {
 				// For legacy blocks with level > 1, treat PartitionID is always 0.
 				// So it can be included in every partition.
 				defaultPartitionInfo := tsdb.DefaultPartitionInfo
 				partitionInfo = &defaultPartitionInfo
-			}
-			if partitionInfo.PartitionCount < partitionCount {
-				for partitionID := partitionInfo.PartitionID; partitionID < partitionCount; partitionID += partitionInfo.PartitionCount {
-					addToPartitionedGroups([]*metadata.Meta{block}, partitionID)
-				}
-			} else if partitionInfo.PartitionCount == partitionCount {
-				addToPartitionedGroups([]*metadata.Meta{block}, partitionInfo.PartitionID)
 			} else {
-				addToPartitionedGroups([]*metadata.Meta{block}, partitionInfo.PartitionID%partitionCount)
+				if partitionInfo.MetricNamePartitionCount < 1 {
+					partitionInfo.MetricNamePartitionCount = 1
+					partitionInfo.MetricNamePartitionID = 0
+				}
+				if partitionInfo.PartitionCount < 1 {
+					partitionInfo.PartitionCount = 1
+					partitionInfo.PartitionID = 0
+				}
+			}
+			block.Thanos.Extensions = tsdb.CortexMetaExtensions{
+				PartitionInfo: partitionInfo,
+				Version:       tsdb.CortexMetaExtensionsVersion1,
+			}
+			for _, i := range getMetricNamePartitionIDs(partitionInfo) {
+				metricNamePartitionedGroups[i] = append(metricNamePartitionedGroups[i], block)
+			}
+		}
+	}
+
+	for i, metricNamePG := range metricNamePartitionedGroups {
+		bg := blocksGroupWithPartition{
+			blocksGroup: blocksGroup{
+				rangeStart: group.rangeStart,
+				rangeEnd:   group.rangeEnd,
+				blocks:     metricNamePG,
+			},
+		}
+		partitionCount := g.calculatePartitionCount(bg, groupHash, metricNamePartitionCount, i)
+		for _, block := range metricNamePG {
+			// We already did it above.
+			partitionInfo, _ := tsdb.GetPartitionInfo(*block)
+			for _, partitionID := range getPartitionIDs(partitionInfo, partitionCount) {
+				addToPartitionedGroups(block.ULID, i, partitionCount, partitionID)
 			}
 		}
 	}
@@ -565,30 +675,49 @@ func (g *PartitionCompactionGrouper) sortPartitionedGroups(partitionedGroups []*
 	})
 }
 
+type partitionIDPair struct {
+	metricNamePartitionID int
+	partitionID           int
+}
+
 func (g *PartitionCompactionGrouper) generatePartitionCompactionJobs(blocks map[ulid.ULID]*metadata.Meta, partitionedGroups []*PartitionedGroupInfo, doRandomPick bool) []*blocksGroupWithPartition {
 	var partitionedBlockGroups []*blocksGroupWithPartition
 	for _, partitionedGroupInfo := range partitionedGroups {
 		partitionedGroupID := partitionedGroupInfo.PartitionedGroupID
 		partitionAdded := 0
-		var partitionIDs []int
+		var partitionIDs []partitionIDPair
+		for _, metricNamePartition := range partitionedGroupInfo.MetricNamePartitions {
+			for _, partition := range metricNamePartition.Partitions {
+				partitionIDs = append(partitionIDs, partitionIDPair{
+					metricNamePartitionID: metricNamePartition.MetricNamePartitionID,
+					partitionID:           partition.PartitionID,
+				})
+			}
+		}
 		if doRandomPick {
 			// Randomly pick partitions from partitioned group to avoid all compactors
 			// trying to get same partition at same time.
 			r := rand.New(rand.NewSource(time.Now().UnixMicro() + int64(hashString(g.ringLifecyclerID))))
-			partitionIDs = r.Perm(len(partitionedGroupInfo.Partitions))
-		} else {
-			for i := 0; i < partitionedGroupInfo.PartitionCount; i++ {
-				partitionIDs = append(partitionIDs, i)
+			partitionIdx := r.Perm(len(partitionIDs))
+			partitionIDsNew := make([]partitionIDPair, len(partitionIDs))
+			for idx, i := range partitionIdx {
+				partitionIDsNew[idx] = partitionIDs[i]
 			}
+			partitionIDs = partitionIDsNew
 		}
-		for _, i := range partitionIDs {
-			partition := partitionedGroupInfo.Partitions[i]
+		for _, idPair := range partitionIDs {
+			i := idPair.metricNamePartitionID
+			j := idPair.partitionID
+			metricNamePartitionCount := partitionedGroupInfo.MetricNamePartitionCount
+			metricNamePartitionID := partitionedGroupInfo.MetricNamePartitions[i].MetricNamePartitionID
+			partitionCount := partitionedGroupInfo.MetricNamePartitions[i].PartitionCount
+			partition := partitionedGroupInfo.MetricNamePartitions[i].Partitions[j]
 			if len(partition.Blocks) == 1 {
 				partition.Blocks = append(partition.Blocks, DUMMY_BLOCK_ID)
-				level.Info(g.logger).Log("msg", "handled single block in partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "partition_count", partitionedGroupInfo.PartitionCount, "partition_id", partition.PartitionID)
+				level.Info(g.logger).Log("msg", "handled single block in partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "metric_name_partition_count", metricNamePartitionCount, "metric_name_partition_id", metricNamePartitionID, "partition_count", partitionCount, "partition_id", partition.PartitionID)
 			} else if len(partition.Blocks) < 1 {
-				if err := g.handleEmptyPartition(partitionedGroupInfo, partition); err != nil {
-					level.Warn(g.logger).Log("msg", "failed to handle empty partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "partition_count", partitionedGroupInfo.PartitionCount, "partition_id", partition.PartitionID, "err", err)
+				if err := g.handleEmptyPartition(partitionedGroupInfo, partition, metricNamePartitionID); err != nil {
+					level.Warn(g.logger).Log("msg", "failed to handle empty partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "metric_name_partition_count", metricNamePartitionCount, "metric_name_partition_id", metricNamePartitionID, "partition_count", partitionCount, "partition_id", partition.PartitionID)
 				}
 				continue
 			}
@@ -599,6 +728,7 @@ func (g *PartitionCompactionGrouper) generatePartitionCompactionJobs(blocks map[
 			partitionedGroup.groupHash = partitionedGroupID
 			partitionedGroup.partitionedGroupInfo = partitionedGroupInfo
 			partitionedGroup.partition = partition
+			partitionedGroup.metricNamePartitionID = i
 			partitionedBlockGroups = append(partitionedBlockGroups, partitionedGroup)
 			partitionAdded++
 		}
@@ -607,42 +737,45 @@ func (g *PartitionCompactionGrouper) generatePartitionCompactionJobs(blocks map[
 }
 
 // handleEmptyPartition uploads a completed partition visit marker for any partition that does have any blocks assigned
-func (g *PartitionCompactionGrouper) handleEmptyPartition(partitionedGroupInfo *PartitionedGroupInfo, partition Partition) error {
+func (g *PartitionCompactionGrouper) handleEmptyPartition(partitionedGroupInfo *PartitionedGroupInfo, partition Partition, metricNamePartitionID int) error {
 	if len(partition.Blocks) > 0 {
 		return nil
 	}
 
-	level.Info(g.logger).Log("msg", "handling empty block partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "partition_count", partitionedGroupInfo.PartitionCount, "partition_id", partition.PartitionID)
-	visitMarker := &partitionVisitMarker{
-		PartitionedGroupID: partitionedGroupInfo.PartitionedGroupID,
-		PartitionID:        partition.PartitionID,
-		Version:            PartitionVisitMarkerVersion1,
+	level.Info(g.logger).Log("msg", "handling empty block partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "metric_name_partition_count", partitionedGroupInfo.MetricNamePartitionCount, "metric_name_partition_id", metricNamePartitionID, "partition_count", partitionedGroupInfo.MetricNamePartitions[metricNamePartitionID].PartitionCount, "partition_id", partition.PartitionID)
+	visitMarker := &PartitionVisitMarkerWithMetricNamePartition{
+		PartitionedGroupID:    partitionedGroupInfo.PartitionedGroupID,
+		PartitionID:           partition.PartitionID,
+		MetricNamePartitionID: metricNamePartitionID,
 	}
 	visitMarkerManager := NewVisitMarkerManager(g.bkt, g.logger, g.ringLifecyclerID, visitMarker)
 	visitMarkerManager.MarkWithStatus(g.ctx, Completed)
 
-	level.Info(g.logger).Log("msg", "handled empty block in partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "partition_count", partitionedGroupInfo.PartitionCount, "partition_id", partition.PartitionID)
+	level.Info(g.logger).Log("msg", "handled empty block in partition", "partitioned_group_id", partitionedGroupInfo.PartitionedGroupID, "metric_name_partition_count", partitionedGroupInfo.MetricNamePartitionCount, "metric_name_partition_id", partitionedGroupInfo.MetricNamePartitions[metricNamePartitionID].MetricNamePartitionID, "partition_count", partitionedGroupInfo.MetricNamePartitions[metricNamePartitionID].PartitionCount, "partition_id", partition.PartitionID)
 	return nil
 }
 
 func (g *PartitionCompactionGrouper) pickPartitionCompactionJob(partitionCompactionJobs []*blocksGroupWithPartition) []*compact.Group {
 	var outGroups []*compact.Group
+	timeRangeSet := make(map[int64]struct{})
 	for _, partitionedGroup := range partitionCompactionJobs {
 		groupHash := partitionedGroup.groupHash
 		partitionedGroupID := partitionedGroup.partitionedGroupInfo.PartitionedGroupID
-		partitionCount := partitionedGroup.partitionedGroupInfo.PartitionCount
+		metricNamePartitionCount := partitionedGroup.partitionedGroupInfo.MetricNamePartitionCount
+		metricNamePartitionID := partitionedGroup.metricNamePartitionID
+		partitionCount := partitionedGroup.partitionedGroupInfo.MetricNamePartitions[metricNamePartitionID].PartitionCount
 		partitionID := partitionedGroup.partition.PartitionID
-		partitionedGroupLogger := log.With(g.logger, "rangeStart", partitionedGroup.rangeStartTime().String(), "rangeEnd", partitionedGroup.rangeEndTime().String(), "rangeDuration", partitionedGroup.rangeDuration().String(), "partitioned_group_id", partitionedGroupID, "partition_id", partitionID, "partition_count", partitionCount, "group_hash", groupHash)
-		visitMarker := newPartitionVisitMarker(g.ringLifecyclerID, partitionedGroupID, partitionID)
+		partitionedGroupLogger := log.With(g.logger, "rangeStart", partitionedGroup.rangeStartTime().String(), "rangeEnd", partitionedGroup.rangeEndTime().String(), "rangeDuration", partitionedGroup.rangeDuration().String(), "partitioned_group_id", partitionedGroupID, "metric_name_partition_id", metricNamePartitionID, "metric_name_partition_count", metricNamePartitionCount, "partition_id", partitionID, "partition_count", partitionCount, "group_hash", groupHash)
+		visitMarker := NewPartitionVisitMarkerWithMetricNamePartition(g.ringLifecyclerID, partitionedGroupID, metricNamePartitionID, partitionID)
 		visitMarkerManager := NewVisitMarkerManager(g.bkt, g.logger, g.ringLifecyclerID, visitMarker)
-		if isVisited, err := g.isGroupVisited(partitionID, visitMarkerManager); err != nil {
+		if isVisited, err := g.isGroupVisited(metricNamePartitionID, partitionID, visitMarkerManager); err != nil {
 			level.Warn(partitionedGroupLogger).Log("msg", "unable to check if partition is visited", "err", err, "group", partitionedGroup.String())
 			continue
 		} else if isVisited {
 			level.Info(partitionedGroupLogger).Log("msg", "skipping group because partition is visited")
 			continue
 		}
-		partitionedGroupKey := createGroupKeyWithPartitionID(groupHash, partitionID, *partitionedGroup)
+		partitionedGroupKey := createGroupKeyWithMetricNameAndPartitionID(groupHash, metricNamePartitionID, partitionID, *partitionedGroup)
 
 		level.Info(partitionedGroupLogger).Log("msg", "found compactable group for user", "group", partitionedGroup.String())
 		begin := time.Now()
@@ -657,8 +790,24 @@ func (g *PartitionCompactionGrouper) pickPartitionCompactionJob(partitionCompact
 			g.userID,
 			fmt.Sprintf("%d", timeRange),
 		}
-		g.compactorMetrics.initMetricWithCompactionLabelValues(metricLabelValues...)
-		g.compactorMetrics.partitionCount.WithLabelValues(metricLabelValues...).Set(float64(partitionCount))
+		// Only initialize and expose metrics once per time range.
+		if _, ok := timeRangeSet[timeRange]; !ok {
+			g.compactorMetrics.initMetricWithCompactionLabelValues(metricLabelValues...)
+			var (
+				totalPartitions   int
+				maxPartitionCount int
+			)
+			for _, metricNamePartition := range partitionedGroup.partitionedGroupInfo.MetricNamePartitions {
+				totalPartitions += metricNamePartition.PartitionCount
+				if metricNamePartition.PartitionCount > maxPartitionCount {
+					maxPartitionCount = metricNamePartition.PartitionCount
+				}
+			}
+			g.compactorMetrics.metricNamePartitionCount.WithLabelValues(metricLabelValues...).Set(float64(partitionedGroup.partitionedGroupInfo.MetricNamePartitionCount))
+			g.compactorMetrics.totalPartitionCount.WithLabelValues(metricLabelValues...).Set(float64(totalPartitions))
+			g.compactorMetrics.maxPartitionsPerMetricNamePartition.WithLabelValues(metricLabelValues...).Set(float64(maxPartitionCount))
+			timeRangeSet[timeRange] = struct{}{}
+		}
 		thanosGroup, err := compact.NewGroup(
 			log.With(partitionedGroupLogger, "groupKey", partitionedGroupKey, "externalLabels", externalLabels, "downsampleResolution", resolution),
 			g.bkt,
@@ -683,19 +832,40 @@ func (g *PartitionCompactionGrouper) pickPartitionCompactionJob(partitionCompact
 			level.Error(partitionedGroupLogger).Log("msg", "failed to create partitioned group", "blocks", partitionedGroup.partition.Blocks)
 		}
 
+		blockPartitionInfos := make(map[ulid.ULID]tsdb.BlockPartitionInfo, len(partitionedGroup.blocks))
 		for _, m := range partitionedGroup.blocks {
 			if err := thanosGroup.AppendMeta(m); err != nil {
 				level.Error(partitionedGroupLogger).Log("msg", "failed to add block to partitioned group", "block", m.ULID, "err", err)
+			}
+			partitionInfo, err := tsdb.GetPartitionInfo(*m)
+			if err != nil {
+				// This shouldn't happen as each block's partition info should have been validated before.
+				// But in case this happens, skip setting block partition info.
+				continue
+			}
+			if partitionInfo.PartitionCount == 0 {
+				partitionInfo.PartitionCount = 1
+			}
+			if partitionInfo.MetricNamePartitionCount == 0 {
+				partitionInfo.MetricNamePartitionCount = 1
+			}
+			blockPartitionInfos[m.ULID] = tsdb.BlockPartitionInfo{
+				PartitionCount:           partitionInfo.PartitionCount,
+				MetricNamePartitionCount: partitionInfo.MetricNamePartitionCount,
 			}
 		}
 		thanosGroup.SetExtensions(&tsdb.CortexMetaExtensions{
 			PartitionInfo: &tsdb.PartitionInfo{
 				PartitionedGroupID:           partitionedGroupID,
+				MetricNamePartitionCount:     metricNamePartitionCount,
+				MetricNamePartitionID:        metricNamePartitionID,
 				PartitionCount:               partitionCount,
 				PartitionID:                  partitionID,
 				PartitionedGroupCreationTime: partitionedGroup.partitionedGroupInfo.CreationTime,
+				BlockPartitionInfos:          blockPartitionInfos,
 			},
 			TimeRange: timeRange,
+			Version:   tsdb.CortexMetaExtensionsVersion1,
 		})
 
 		outGroups = append(outGroups, thanosGroup)
@@ -710,14 +880,14 @@ func (g *PartitionCompactionGrouper) pickPartitionCompactionJob(partitionCompact
 	for _, p := range outGroups {
 		partitionInfo, err := tsdb.ConvertToPartitionInfo(p.Extensions())
 		if err == nil && partitionInfo != nil {
-			level.Info(g.logger).Log("msg", "picked compaction job", "partitioned_group_id", partitionInfo.PartitionedGroupID, "partition_count", partitionInfo.PartitionCount)
+			level.Info(g.logger).Log("msg", "picked compaction job", "partitioned_group_id", partitionInfo.PartitionedGroupID, "metric_name_partition_count", partitionInfo.MetricNamePartitionCount, "metric_name_partition_id", partitionInfo.MetricNamePartitionID, "partition_count", partitionInfo.PartitionCount, "partition_id", partitionInfo.PartitionID)
 		}
 	}
 	return outGroups
 }
 
-func (g *PartitionCompactionGrouper) isGroupVisited(partitionID int, visitMarkerManager *VisitMarkerManager) (bool, error) {
-	visitMarker := &partitionVisitMarker{}
+func (g *PartitionCompactionGrouper) isGroupVisited(metricNamePartitionID, partitionID int, visitMarkerManager *VisitMarkerManager) (bool, error) {
+	visitMarker := &PartitionVisitMarkerWithMetricNamePartition{}
 	err := visitMarkerManager.ReadVisitMarker(g.ctx, visitMarker)
 	if err != nil {
 		if errors.Is(err, errorVisitMarkerNotFound) {
@@ -731,7 +901,7 @@ func (g *PartitionCompactionGrouper) isGroupVisited(partitionID int, visitMarker
 		level.Info(g.logger).Log("msg", "partition visit marker with partition ID is completed", "partition_visit_marker", visitMarker.String())
 		return true, nil
 	}
-	if visitMarker.IsVisited(g.partitionVisitMarkerTimeout, partitionID) {
+	if visitMarker.IsVisited(g.partitionVisitMarkerTimeout, metricNamePartitionID, partitionID) {
 		level.Info(g.logger).Log("msg", "visited partition with partition ID", "partition_visit_marker", visitMarker.String())
 		return true, nil
 	}
@@ -872,9 +1042,10 @@ func (t *timeRangeStatus) previousTimeRangeDuration() time.Duration {
 
 type blocksGroupWithPartition struct {
 	blocksGroup
-	groupHash            uint32
-	partitionedGroupInfo *PartitionedGroupInfo
-	partition            Partition
+	groupHash             uint32
+	partitionedGroupInfo  *PartitionedGroupInfo
+	partition             Partition
+	metricNamePartitionID int
 }
 
 func (g blocksGroupWithPartition) rangeDuration() time.Duration {
@@ -893,8 +1064,8 @@ func createGroupKeyWithPartition(groupHash uint32, group blocksGroupWithPartitio
 	return fmt.Sprintf("%v%s", groupHash, group.blocks[0].Thanos.GroupKey())
 }
 
-func createGroupKeyWithPartitionID(groupHash uint32, partitionID int, group blocksGroupWithPartition) string {
-	return fmt.Sprintf("%v%d%s", groupHash, partitionID, group.blocks[0].Thanos.GroupKey())
+func createGroupKeyWithMetricNameAndPartitionID(groupHash uint32, metricNamePartitionID, partitionID int, group blocksGroupWithPartition) string {
+	return fmt.Sprintf("%v:%d:%d:%s", groupHash, metricNamePartitionID, partitionID, group.blocks[0].Thanos.GroupKey())
 }
 
 func createBlocksGroup(blocks map[ulid.ULID]*metadata.Meta, blockIDs []ulid.ULID, rangeStart int64, rangeEnd int64) (*blocksGroupWithPartition, error) {
