@@ -13,11 +13,12 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/prometheus/prometheus/tsdb"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
+	"github.com/thanos-io/thanos/pkg/block/metadata"
 
 	"github.com/cortexproject/cortex/pkg/storage/bucket"
 	cortex_tsdb "github.com/cortexproject/cortex/pkg/storage/tsdb"
@@ -422,19 +423,36 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 	s, bucket, _, _ := prepareBucketScanBlocksFinder(t, prepareBucketScanBlocksFinderConfig())
 
 	now := time.Now()
-	block1 := cortex_testutil.MockStorageBlock(t, bucket, "user-1", 10, 15)
-	block2 := cortex_testutil.MockStorageBlock(t, bucket, "user-1", 12, 20)
-	block3 := cortex_testutil.MockStorageBlock(t, bucket, "user-1", 20, 30)
-	block4 := cortex_testutil.MockStorageBlock(t, bucket, "user-1", 30, 40)
+	thanosMetaWithPartitionIdx1 := metadata.Thanos{
+		Extensions: cortex_tsdb.CortexMetaExtensions{
+			PartitionInfo: &cortex_tsdb.PartitionInfo{
+				MetricNamePartitionCount: 2,
+				MetricNamePartitionID:    0,
+			},
+		},
+	}
+	thanosMetaWithPartitionIdx2 := metadata.Thanos{
+		Extensions: cortex_tsdb.CortexMetaExtensions{
+			PartitionInfo: &cortex_tsdb.PartitionInfo{
+				MetricNamePartitionCount: 2,
+				MetricNamePartitionID:    1,
+			},
+		},
+	}
+	block1 := cortex_testutil.MockStorageBlockWithThanosMetadata(t, bucket, "user-1", 10, 15, thanosMetaWithPartitionIdx1)
+	block2 := cortex_testutil.MockStorageBlockWithThanosMetadata(t, bucket, "user-1", 12, 20, thanosMetaWithPartitionIdx2)
+	block3 := cortex_testutil.MockStorageBlockWithThanosMetadata(t, bucket, "user-1", 20, 30, thanosMetaWithPartitionIdx1)
+	block4 := cortex_testutil.MockStorageBlockWithThanosMetadata(t, bucket, "user-1", 30, 40, thanosMetaWithPartitionIdx2)
 	block5 := cortex_testutil.MockStorageBlock(t, bucket, "user-1", now.Add(-2*time.Hour).UnixMilli(), now.UnixMilli()) // This block is within ignoreBlocksWithin
-	mark3 := bucketindex.BlockDeletionMarkFromThanosMarker(cortex_testutil.MockStorageDeletionMark(t, bucket, "user-1", block3))
+	mark3 := bucketindex.BlockDeletionMarkFromThanosMarker(cortex_testutil.MockStorageDeletionMark(t, bucket, "user-1", block3.BlockMeta))
 
 	require.NoError(t, services.StartAndAwaitRunning(ctx, s))
 
 	tests := map[string]struct {
 		minT          int64
 		maxT          int64
-		expectedMetas []tsdb.BlockMeta
+		matchers      []*labels.Matcher
+		expectedMetas []metadata.Meta
 		expectedMarks map[ulid.ULID]*bucketindex.BlockDeletionMark
 	}{
 		"no matching block because the range is too low": {
@@ -450,7 +468,7 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		"matching all blocks": {
 			minT:          0,
 			maxT:          60,
-			expectedMetas: []tsdb.BlockMeta{block4, block3, block2, block1},
+			expectedMetas: []metadata.Meta{block4, block3, block2, block1},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
 				block3.ULID: mark3,
 			},
@@ -458,13 +476,13 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		"query range starting at a block maxT": {
 			minT:          block3.MaxTime,
 			maxT:          60,
-			expectedMetas: []tsdb.BlockMeta{block4},
+			expectedMetas: []metadata.Meta{block4},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{},
 		},
 		"query range ending at a block minT": {
 			minT:          block3.MinTime,
 			maxT:          block4.MinTime,
-			expectedMetas: []tsdb.BlockMeta{block4, block3},
+			expectedMetas: []metadata.Meta{block4, block3},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
 				block3.ULID: mark3,
 			},
@@ -472,7 +490,7 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		"query range within a single block": {
 			minT:          block3.MinTime + 2,
 			maxT:          block3.MaxTime - 2,
-			expectedMetas: []tsdb.BlockMeta{block3},
+			expectedMetas: []metadata.Meta{block3},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
 				block3.ULID: mark3,
 			},
@@ -480,13 +498,13 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		"query range within multiple blocks": {
 			minT:          13,
 			maxT:          16,
-			expectedMetas: []tsdb.BlockMeta{block2, block1},
+			expectedMetas: []metadata.Meta{block2, block1},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{},
 		},
 		"query range matching exactly a single block": {
 			minT:          block3.MinTime,
 			maxT:          block3.MaxTime - 1,
-			expectedMetas: []tsdb.BlockMeta{block3},
+			expectedMetas: []metadata.Meta{block3},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
 				block3.ULID: mark3,
 			},
@@ -494,10 +512,54 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		"query range matching all blocks but should ignore non-queryable block": {
 			minT:          0,
 			maxT:          block5.MaxTime,
-			expectedMetas: []tsdb.BlockMeta{block4, block3, block2, block1},
+			expectedMetas: []metadata.Meta{block4, block3, block2, block1},
 			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
 				block3.ULID: mark3,
 			},
+		},
+		"non metric name matchers, matching all blocks": {
+			minT:          0,
+			maxT:          60,
+			matchers:      []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "job", "test")},
+			expectedMetas: []metadata.Meta{block4, block3, block2, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ULID: mark3,
+			},
+		},
+		"metric name matchers but regex, matching all blocks": {
+			minT:          0,
+			maxT:          60,
+			matchers:      []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, labels.MetricName, "test")},
+			expectedMetas: []metadata.Meta{block4, block3, block2, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ULID: mark3,
+			},
+		},
+		"metric name with equal matcher, matching blocks partition by metric name, partition id 1": {
+			minT:          0,
+			maxT:          60,
+			matchers:      []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test")},
+			expectedMetas: []metadata.Meta{block4, block2},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{},
+		},
+		"metric name with equal matcher, matching blocks partition by metric name, partition id 0": {
+			minT:          0,
+			maxT:          60,
+			matchers:      []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test1")},
+			expectedMetas: []metadata.Meta{block3, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ULID: mark3,
+			},
+		},
+		"multiple metric names with equal matcher added, partition using the first metric name we see": {
+			minT: 0,
+			maxT: 60,
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test"),
+				labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "tes1"),
+			},
+			expectedMetas: []metadata.Meta{block4, block2},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{},
 		},
 	}
 
@@ -506,7 +568,7 @@ func TestBucketScanBlocksFinder_GetBlocks(t *testing.T) {
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()
 
-			metas, deletionMarks, err := s.GetBlocks(ctx, "user-1", testData.minT, testData.maxT, nil)
+			metas, deletionMarks, err := s.GetBlocks(ctx, "user-1", testData.minT, testData.maxT, testData.matchers)
 			require.NoError(t, err)
 			require.Equal(t, len(testData.expectedMetas), len(metas))
 			require.Equal(t, testData.expectedMarks, deletionMarks)

@@ -9,17 +9,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/oklog/ulid/v2"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 
 	"github.com/cortexproject/cortex/pkg/storage/bucket"
-
-	"github.com/cortexproject/cortex/pkg/util/validation"
-
 	"github.com/cortexproject/cortex/pkg/storage/tsdb/bucketindex"
 	cortex_testutil "github.com/cortexproject/cortex/pkg/storage/tsdb/testutil"
 	"github.com/cortexproject/cortex/pkg/util/services"
+	"github.com/cortexproject/cortex/pkg/util/validation"
 )
 
 func TestBucketIndexBlocksFinder_GetBlocks(t *testing.T) {
@@ -32,10 +31,10 @@ func TestBucketIndexBlocksFinder_GetBlocks(t *testing.T) {
 
 	// Mock a bucket index.
 	now := time.Now()
-	block1 := &bucketindex.Block{ID: ulid.MustNew(1, nil), MinTime: 10, MaxTime: 15}
-	block2 := &bucketindex.Block{ID: ulid.MustNew(2, nil), MinTime: 12, MaxTime: 20}
-	block3 := &bucketindex.Block{ID: ulid.MustNew(3, nil), MinTime: 20, MaxTime: 30}
-	block4 := &bucketindex.Block{ID: ulid.MustNew(4, nil), MinTime: 30, MaxTime: 40}
+	block1 := &bucketindex.Block{ID: ulid.MustNew(1, nil), MinTime: 10, MaxTime: 15, MetricNamePartitionCount: 2, MetricNamePartitionID: 0}
+	block2 := &bucketindex.Block{ID: ulid.MustNew(2, nil), MinTime: 12, MaxTime: 20, MetricNamePartitionCount: 2, MetricNamePartitionID: 1}
+	block3 := &bucketindex.Block{ID: ulid.MustNew(3, nil), MinTime: 20, MaxTime: 30, MetricNamePartitionCount: 2, MetricNamePartitionID: 0}
+	block4 := &bucketindex.Block{ID: ulid.MustNew(4, nil), MinTime: 30, MaxTime: 40, MetricNamePartitionCount: 2, MetricNamePartitionID: 1}
 	block5 := &bucketindex.Block{ID: ulid.MustNew(5, nil), MinTime: 30, MaxTime: 40}                                               // Time range overlaps with block4, but this block deletion mark is above the threshold.
 	block6 := &bucketindex.Block{ID: ulid.MustNew(6, nil), MinTime: now.Add(-2 * time.Hour).UnixMilli(), MaxTime: now.UnixMilli()} // This block is within ignoreBlocksWithin and shouldn't be loaded.
 	mark3 := &bucketindex.BlockDeletionMark{ID: block3.ID, DeletionTime: time.Now().Unix()}
@@ -53,6 +52,7 @@ func TestBucketIndexBlocksFinder_GetBlocks(t *testing.T) {
 	tests := map[string]struct {
 		minT           int64
 		maxT           int64
+		matchers       []*labels.Matcher
 		expectedBlocks bucketindex.Blocks
 		expectedMarks  map[ulid.ULID]*bucketindex.BlockDeletionMark
 	}{
@@ -118,6 +118,50 @@ func TestBucketIndexBlocksFinder_GetBlocks(t *testing.T) {
 				block3.ID: mark3,
 			},
 		},
+		"non metric name matchers, matching all blocks": {
+			minT:           0,
+			maxT:           60,
+			matchers:       []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "job", "test")},
+			expectedBlocks: bucketindex.Blocks{block4, block3, block2, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ID: mark3,
+			},
+		},
+		"metric name matchers but regex, matching all blocks": {
+			minT:           0,
+			maxT:           60,
+			matchers:       []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, labels.MetricName, "test")},
+			expectedBlocks: bucketindex.Blocks{block4, block3, block2, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ID: mark3,
+			},
+		},
+		"metric name with equal matcher, matching blocks partition by metric name, partition id 1": {
+			minT:           0,
+			maxT:           60,
+			matchers:       []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test")},
+			expectedBlocks: bucketindex.Blocks{block4, block2},
+			expectedMarks:  map[ulid.ULID]*bucketindex.BlockDeletionMark{},
+		},
+		"metric name with equal matcher, matching blocks partition by metric name, partition id 0": {
+			minT:           0,
+			maxT:           60,
+			matchers:       []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test1")},
+			expectedBlocks: bucketindex.Blocks{block3, block1},
+			expectedMarks: map[ulid.ULID]*bucketindex.BlockDeletionMark{
+				block3.ID: mark3,
+			},
+		},
+		"multiple metric names with equal matcher added, partition using the first metric name we see": {
+			minT: 0,
+			maxT: 60,
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test"),
+				labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "test1"),
+			},
+			expectedBlocks: bucketindex.Blocks{block4, block2},
+			expectedMarks:  map[ulid.ULID]*bucketindex.BlockDeletionMark{},
+		},
 	}
 
 	for testName, testData := range tests {
@@ -125,7 +169,7 @@ func TestBucketIndexBlocksFinder_GetBlocks(t *testing.T) {
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()
 
-			blocks, deletionMarks, err := finder.GetBlocks(ctx, userID, testData.minT, testData.maxT, nil)
+			blocks, deletionMarks, err := finder.GetBlocks(ctx, userID, testData.minT, testData.maxT, testData.matchers)
 			require.NoError(t, err)
 			require.ElementsMatch(t, testData.expectedBlocks, blocks)
 			require.Equal(t, testData.expectedMarks, deletionMarks)

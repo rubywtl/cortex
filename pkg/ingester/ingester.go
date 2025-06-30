@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -269,6 +270,8 @@ type Ingester struct {
 	// Suspended TSDBs
 	suspendedTsdbsMtx sync.RWMutex
 	suspendedTsdbs    map[string]error
+
+	shardByMetricNameTenants *util.AllowedTenants
 }
 
 // Shipper interface is used to have an easy way to mock it in tests.
@@ -732,12 +735,14 @@ func New(cfg Config, limits *validation.Overrides, registerer prometheus.Registe
 	}
 
 	i := &Ingester{
-		cfg:                          cfg,
-		limits:                       limits,
-		usersMetadata:                map[string]*userMetricsMetadata{},
-		TSDBState:                    newTSDBState(bucketClient, registerer),
-		logger:                       logger,
-		ingestionRate:                util_math.NewEWMARate(0.2, instanceIngestionRateTickInterval),
+		cfg:           cfg,
+		limits:        limits,
+		usersMetadata: map[string]*userMetricsMetadata{},
+		TSDBState:     newTSDBState(bucketClient, registerer),
+		logger:        logger,
+		ingestionRate: util_math.NewEWMARate(0.2, instanceIngestionRateTickInterval),
+
+		shardByMetricNameTenants:     util.NewAllowedTenants(cfg.BlocksStorageConfig.TSDB.ShardByMetricNameTenants, nil),
 		expandedPostingsCacheFactory: cortex_tsdb.NewExpandedPostingsCacheFactory(cfg.BlocksStorageConfig.TSDB.PostingsCache),
 		matchersCache:                storecache.NoopMatchersCache,
 	}
@@ -2485,6 +2490,12 @@ func (i *Ingester) getOrCreateTSDB(userID string, force bool) (*userTSDB, error)
 	return db, nil
 }
 
+func (i *Ingester) blockQuerierFunc() tsdb.BlockQuerierFunc {
+	return func(b tsdb.BlockReader, mint, maxt int64) (storage.Querier, error) {
+		return NewShardByMetricNameBlockQuerier(b, mint, maxt, i.metrics.queriedBlocks, i.metrics.skippedBlocks)
+	}
+}
+
 func (i *Ingester) blockChunkQuerierFunc(userId string) tsdb.BlockChunkQuerierFunc {
 	return func(b tsdb.BlockReader, mint, maxt int64) (storage.ChunkQuerier, error) {
 		db, err := i.getTSDB(userId)
@@ -2499,10 +2510,18 @@ func (i *Ingester) blockChunkQuerierFunc(userId string) tsdb.BlockChunkQuerierFu
 		// For more details, see: https://github.com/cortexproject/cortex/issues/6556
 		// TODO: alanprot: Consider removing this logic when prometheus is updated as this logic is "fixed" upstream.
 		if postingCache == nil || mint > db.Head().MaxTime() {
-			return tsdb.NewBlockChunkQuerier(b, mint, maxt)
+			q, err := tsdb.NewBlockChunkQuerier(b, mint, maxt)
+			if err != nil {
+				return nil, fmt.Errorf("open querier for block %s: %w", b, err)
+			}
+			return NewShardByMetricNameBlockChunkQuerier(b, q, mint, maxt, i.metrics.queriedBlocks, i.metrics.skippedBlocks)
 		}
 
-		return cortex_tsdb.NewCachedBlockChunkQuerier(postingCache, b, mint, maxt)
+		q, err := cortex_tsdb.NewCachedBlockChunkQuerier(postingCache, b, mint, maxt)
+		if err != nil {
+			return nil, fmt.Errorf("open querier for block %s: %w", b, err)
+		}
+		return NewShardByMetricNameBlockChunkQuerier(b, q, mint, maxt, i.metrics.queriedBlocks, i.metrics.skippedBlocks)
 	}
 }
 
@@ -2548,6 +2567,24 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 		walCompressType = i.cfg.BlocksStorageConfig.TSDB.WALCompressionType
 	}
 
+	// If shard by metric name not enabled for the user, fallback to
+	// the default leveled compactor.
+	var newCompactorFunc tsdb.NewCompactorFunc
+	if i.shardByMetricNameTenants.IsAllowed(userID) {
+		newCompactorFunc = func(ctx context.Context, r prometheus.Registerer, l *slog.Logger, ranges []int64, pool chunkenc.Pool, opts *tsdb.Options) (tsdb.Compactor, error) {
+			return &ShardByMetricNameCompactor{
+				userID:                   userID,
+				overrides:                i.limits,
+				logger:                   userLogger,
+				slogger:                  l,
+				ctx:                      ctx,
+				chunkPool:                pool,
+				maxBlockChunkSegmentSize: opts.MaxBlockChunkSegmentSize,
+				metrics:                  tsdb.NewCompactorMetrics(r),
+			}, nil
+		}
+	}
+
 	// Create a new user database
 	db, err := tsdb.Open(udir, logutil.GoKitLogToSlog(userLogger), tsdbPromReg, &tsdb.Options{
 		RetentionDuration:              i.cfg.BlocksStorageConfig.TSDB.Retention.Milliseconds(),
@@ -2570,6 +2607,8 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 		EnableOverlappingCompaction:    false, // Always let compactors handle overlapped blocks, e.g. OOO blocks.
 		EnableNativeHistograms:         true,  // Always enable Native Histograms. Gate keeping is done though a per-tenant limit at ingestion.
 		BlockChunkQuerierFunc:          i.blockChunkQuerierFunc(userID),
+		NewCompactorFunc:               newCompactorFunc,
+		BlockQuerierFunc:               i.blockQuerierFunc(),
 	}, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open TSDB: %s", udir)

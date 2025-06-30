@@ -71,6 +71,10 @@ type ingesterMetrics struct {
 
 	// Posting Cache Metrics
 	expandedPostingsCacheMetrics *tsdb.ExpandedPostingsCacheMetrics
+
+	// Shard by metric name metrics
+	queriedBlocks prometheus.Counter
+	skippedBlocks prometheus.Counter
 }
 
 func newIngesterMetrics(r prometheus.Registerer,
@@ -273,6 +277,15 @@ func newIngesterMetrics(r prometheus.Registerer,
 			Name: "cortex_ingester_active_native_histogram_series",
 			Help: "Number of currently active native histogram series per user.",
 		}, []string{"user"}),
+
+		queriedBlocks: promauto.With(r).NewCounter(prometheus.CounterOpts{
+			Name: "cortex_ingester_queried_blocks_total",
+			Help: "The total number of blocks queried that match the requested time range.",
+		}),
+		skippedBlocks: promauto.With(r).NewCounter(prometheus.CounterOpts{
+			Name: "cortex_ingester_skipped_blocks_total",
+			Help: "The total number of blocks skipped by metric name partition.",
+		}),
 	}
 
 	if postingsCacheEnabled && r != nil {

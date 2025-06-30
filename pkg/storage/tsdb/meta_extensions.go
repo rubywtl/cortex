@@ -7,15 +7,22 @@ import (
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 )
 
+const (
+	CortexMetaExtensionsVersion1 = 1
+)
+
 type CortexMetaExtensions struct {
 	PartitionInfo *PartitionInfo `json:"partition_info,omitempty"`
 	TimeRange     int64          `json:"time_range,omitempty"`
+	Version       int            `json:"version,omitempty"`
 }
 
 type PartitionInfo struct {
 	PartitionedGroupID           uint32 `json:"partitioned_group_id"`
 	PartitionCount               int    `json:"partition_count"`
 	PartitionID                  int    `json:"partition_id"`
+	MetricNamePartitionCount     int    `json:"metric_name_partition_count"`
+	MetricNamePartitionID        int    `json:"metric_name_partition_id"`
 	PartitionedGroupCreationTime int64  `json:"partitioned_group_creation_time"`
 }
 
@@ -24,6 +31,8 @@ var (
 		PartitionedGroupID:           0,
 		PartitionID:                  0,
 		PartitionCount:               1,
+		MetricNamePartitionID:        0,
+		MetricNamePartitionCount:     1,
 		PartitionedGroupCreationTime: 0,
 	}
 )

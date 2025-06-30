@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid/v2"
@@ -112,7 +113,7 @@ func NewBucketScanBlocksFinder(cfg BucketScanBlocksFinderConfig, usersScanner us
 
 // GetBlocks returns known blocks for userID containing samples within the range minT
 // and maxT (milliseconds, both included). Returned blocks are sorted by MaxTime descending.
-func (d *BucketScanBlocksFinder) GetBlocks(_ context.Context, userID string, minT, maxT int64, _ []*labels.Matcher) (bucketindex.Blocks, map[ulid.ULID]*bucketindex.BlockDeletionMark, error) {
+func (d *BucketScanBlocksFinder) GetBlocks(_ context.Context, userID string, minT, maxT int64, matchers []*labels.Matcher) (bucketindex.Blocks, map[ulid.ULID]*bucketindex.BlockDeletionMark, error) {
 	// We need to ensure the initial full bucket scan succeeded.
 	if d.State() != services.Running {
 		return nil, nil, errBucketScanBlocksFinderNotRunning
@@ -129,13 +130,29 @@ func (d *BucketScanBlocksFinder) GetBlocks(_ context.Context, userID string, min
 		return nil, nil, nil
 	}
 
+	var metricNameHash uint64
+	for _, matcher := range matchers {
+		// TODO: think about how to handle queries with multiple metric name?
+		if matcher.Name == labels.MetricName && matcher.Type == labels.MatchEqual {
+			metricNameHash = hash(matcher.Value)
+			break
+		}
+	}
+
 	// Given we do expect the large majority of queries to have a time range close
 	// to "now", we're going to find matching blocks iterating the list in reverse order.
 	var matchingMetas bucketindex.Blocks
 	for i := len(userMetas) - 1; i >= 0; i-- {
-		if userMetas[i].Within(minT, maxT) {
-			matchingMetas = append(matchingMetas, userMetas[i])
+		if !userMetas[i].Within(minT, maxT) {
+			continue
 		}
+		if metricNameHash > 0 && userMetas[i].MetricNamePartitionCount > 0 {
+			if metricNameHash%uint64(userMetas[i].MetricNamePartitionCount) != uint64(userMetas[i].MetricNamePartitionID) {
+				continue
+			}
+		}
+
+		matchingMetas = append(matchingMetas, userMetas[i])
 
 		// We can safely break the loop because metas are sorted by MaxTime.
 		if userMetas[i].MaxTime <= minT {
@@ -455,4 +472,10 @@ type userFetcher struct {
 	metadataFetcher    block.MetadataFetcher
 	deletionMarkFilter *block.IgnoreDeletionMarkFilter
 	userBucket         objstore.Bucket
+}
+
+func hash(s string) uint64 {
+	h := xxhash.New()
+	_, _ = h.Write([]byte(s))
+	return h.Sum64()
 }

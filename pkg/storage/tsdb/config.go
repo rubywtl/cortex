@@ -180,6 +180,8 @@ type TSDBConfig struct {
 
 	// Posting Cache Configuration for TSDB
 	PostingsCache TSDBPostingsCacheConfig `yaml:"expanded_postings_cache" doc:"description=[EXPERIMENTAL] If enabled, ingesters will cache expanded postings when querying blocks. Caching can be configured separately for the head and compacted blocks."`
+	// Tenants to enable shard by metric name.
+	ShardByMetricNameTenants flagext.StringSliceCSV `yaml:"shard_by_metric_name_tenants"`
 }
 
 // RegisterFlags registers the TSDBConfig flags.
@@ -211,6 +213,7 @@ func (cfg *TSDBConfig) RegisterFlags(f *flag.FlagSet) {
 	flagext.DeprecatedFlag(f, "blocks-storage.tsdb.wal-compression-enabled", "Deprecated (use blocks-storage.tsdb.wal-compression-type instead): True to enable TSDB WAL compression.", util_log.Logger)
 
 	cfg.PostingsCache.RegisterFlagsWithPrefix("blocks-storage.", f)
+	f.Var(&cfg.ShardByMetricNameTenants, "blocks-storage.tsdb.shardby-metric-name-tenants", "Comma separated list of tenants that can be shard by metric name. If specified, only these tenants will enable shard by metric name.")
 }
 
 // Validate the config.

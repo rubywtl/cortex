@@ -8,6 +8,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/objstore"
 
@@ -35,8 +36,14 @@ type BucketIndexBlocksFinderConfig struct {
 type BucketIndexBlocksFinder struct {
 	services.Service
 
-	cfg    BucketIndexBlocksFinderConfig
-	loader *bucketindex.Loader
+	cfg                BucketIndexBlocksFinderConfig
+	loader             *bucketindex.Loader
+	blockFinderMetrics *blockFinderMetrics
+}
+
+type blockFinderMetrics struct {
+	totalBlocksFound                   prometheus.Counter
+	blocksSkippedByMetricNamePartition prometheus.Counter
 }
 
 func NewBucketIndexBlocksFinder(cfg BucketIndexBlocksFinderConfig, bkt objstore.Bucket, cfgProvider bucket.TenantConfigProvider, logger log.Logger, reg prometheus.Registerer) *BucketIndexBlocksFinder {
@@ -46,11 +53,21 @@ func NewBucketIndexBlocksFinder(cfg BucketIndexBlocksFinderConfig, bkt objstore.
 		cfg:     cfg,
 		loader:  loader,
 		Service: loader,
+		blockFinderMetrics: &blockFinderMetrics{
+			totalBlocksFound: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "cortex_bucket_index_blocks_finder_blocks_found_total",
+				Help: "Total number of blocks found via bucket index finder that matches the query time range",
+			}),
+			blocksSkippedByMetricNamePartition: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "cortex_bucket_index_blocks_finder_blocks_skipped_by_metric_name_partition_total",
+				Help: "Total number of blocks skipped by metric name partition. This happens when the metric name partition does not match the query metric name",
+			}),
+		},
 	}
 }
 
 // GetBlocks implements BlocksFinder.
-func (f *BucketIndexBlocksFinder) GetBlocks(ctx context.Context, userID string, minT, maxT int64, _ []*labels.Matcher) (bucketindex.Blocks, map[ulid.ULID]*bucketindex.BlockDeletionMark, error) {
+func (f *BucketIndexBlocksFinder) GetBlocks(ctx context.Context, userID string, minT, maxT int64, matchers []*labels.Matcher) (bucketindex.Blocks, map[ulid.ULID]*bucketindex.BlockDeletionMark, error) {
 	if f.State() != services.Running {
 		return nil, nil, errBucketIndexBlocksFinderNotRunning
 	}
@@ -87,10 +104,26 @@ func (f *BucketIndexBlocksFinder) GetBlocks(ctx context.Context, userID string, 
 		matchingDeletionMarks = map[ulid.ULID]*bucketindex.BlockDeletionMark{}
 	)
 
+	var metricNameHash uint64
+	for _, matcher := range matchers {
+		// TODO: think about how to handle queries with multiple metric name?
+		if matcher.Name == labels.MetricName && matcher.Type == labels.MatchEqual {
+			metricNameHash = hash(matcher.Value)
+			break
+		}
+	}
+
 	// Filter blocks containing samples within the range.
 	for _, block := range idx.Blocks {
 		if !block.Within(minT, maxT) {
 			continue
+		}
+		f.blockFinderMetrics.totalBlocksFound.Inc()
+		if metricNameHash > 0 && block.MetricNamePartitionCount > 0 {
+			if metricNameHash%uint64(block.MetricNamePartitionCount) != uint64(block.MetricNamePartitionID) {
+				f.blockFinderMetrics.blocksSkippedByMetricNamePartition.Inc()
+				continue
+			}
 		}
 
 		matchingBlocks[block.ID] = block

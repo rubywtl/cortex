@@ -119,6 +119,10 @@ type Block struct {
 
 	// Parquet metadata if exists. If doesn't exist it will be nil.
 	Parquet *parquet.ConverterMarkMeta `json:"parquet,omitempty"`
+
+	// Partition by Metric Name ID and Count, used for query.
+	MetricNamePartitionCount int `json:"metric_name_partition_count,omitempty"`
+	MetricNamePartitionID    int `json:"metric_name_partition_id,omitempty"`
 }
 
 // Within returns whether the block contains samples within the provided range.
@@ -136,7 +140,7 @@ func (m *Block) GetUploadedAt() time.Time {
 // The returned meta doesn't include all original meta.json data but only a subset
 // of it.
 func (m *Block) ThanosMeta(userID string) *metadata.Meta {
-	return &metadata.Meta{
+	meta := &metadata.Meta{
 		BlockMeta: tsdb.BlockMeta{
 			ULID:    m.ID,
 			MinTime: m.MinTime,
@@ -155,6 +159,15 @@ func (m *Block) ThanosMeta(userID string) *metadata.Meta {
 			},
 		},
 	}
+	if m.MetricNamePartitionCount > 0 {
+		meta.Thanos.Extensions = cortex_tsdb.CortexMetaExtensions{
+			PartitionInfo: &cortex_tsdb.PartitionInfo{
+				MetricNamePartitionCount: m.MetricNamePartitionCount,
+				MetricNamePartitionID:    m.MetricNamePartitionID,
+			},
+		}
+	}
+	return meta
 }
 
 func (m *Block) thanosMetaSegmentFiles() (files []string) {
@@ -177,7 +190,7 @@ func (m *Block) String() string {
 func BlockFromThanosMeta(meta metadata.Meta) *Block {
 	segmentsFormat, segmentsNum := detectBlockSegmentsFormat(meta)
 
-	return &Block{
+	b := &Block{
 		ID:             meta.ULID,
 		MinTime:        meta.MinTime,
 		MaxTime:        meta.MaxTime,
@@ -186,6 +199,12 @@ func BlockFromThanosMeta(meta metadata.Meta) *Block {
 		SeriesMaxSize:  meta.Thanos.IndexStats.SeriesMaxSize,
 		ChunkMaxSize:   meta.Thanos.IndexStats.ChunkMaxSize,
 	}
+	partitionInfo, _ := cortex_tsdb.ConvertToPartitionInfo(meta.Thanos.Extensions)
+	if partitionInfo != nil && partitionInfo.MetricNamePartitionCount > 0 {
+		b.MetricNamePartitionCount = partitionInfo.MetricNamePartitionCount
+		b.MetricNamePartitionID = partitionInfo.MetricNamePartitionID
+	}
+	return b
 }
 
 func detectBlockSegmentsFormat(meta metadata.Meta) (string, int) {

@@ -222,6 +222,8 @@ type Limits struct {
 	ParquetConverterEnabled         bool    `yaml:"parquet_converter_enabled" json:"parquet_converter_enabled" doc:"hidden"`
 	ParquetConverterTenantShardSize float64 `yaml:"parquet_converter_tenant_shard_size" json:"parquet_converter_tenant_shard_size" doc:"hidden"`
 
+	MetricNameShardSize int `yaml:"metric_name_shard_size" json:"metric_name_shard_size"`
+
 	// This config doesn't have a CLI flag registered here because they're registered in
 	// their own original config struct.
 	S3SSEType                 string `yaml:"s3_sse_type" json:"s3_sse_type" doc:"nocli|description=S3 server-side encryption type. Required to enable server-side encryption overrides for a specific tenant. If not set, the default S3 client settings are used."`
@@ -328,6 +330,7 @@ func (l *Limits) RegisterFlags(f *flag.FlagSet) {
 
 	f.Float64Var(&l.ParquetConverterTenantShardSize, "parquet-converter.tenant-shard-size", 0, "The default tenant's shard size when the shuffle-sharding strategy is used by the parquet converter. When this setting is specified in the per-tenant overrides, a value of 0 disables shuffle sharding for the tenant. If the value is < 1 and > 0 the shard size will be a percentage of the total parquet converters.")
 	f.BoolVar(&l.ParquetConverterEnabled, "parquet-converter.enabled", false, "If set, enables the Parquet converter to create the parquet files.")
+	f.IntVar(&l.MetricNameShardSize, "compactor.metric-name-shard-size", 0, "Shard by metric name shard size.")
 
 	// Parquet Queryable enforced limits.
 	f.IntVar(&l.ParquetMaxFetchedRowCount, "querier.parquet-queryable.max-fetched-row-count", 0, "The maximum number of rows that can be fetched when querying parquet storage. Each row maps to a series in a parquet file. This limit applies before materializing chunks. 0 to disable.")
@@ -933,6 +936,10 @@ func (o *Overrides) CompactorPartitionIndexSizeBytes(userID string) int64 {
 // CompactorPartitionSeriesCount returns shard size (number of rulers) used by this tenant when using shuffle-sharding strategy.
 func (o *Overrides) CompactorPartitionSeriesCount(userID string) int64 {
 	return o.GetOverridesForUser(userID).CompactorPartitionSeriesCount
+}
+
+func (o *Overrides) GetMetricNameShardSize(userID string) int {
+	return o.GetOverridesForUser(userID).MetricNameShardSize
 }
 
 // MetricRelabelConfigs returns the metric relabel configs for a given user.

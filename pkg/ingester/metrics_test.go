@@ -136,6 +136,12 @@ func TestIngesterMetrics(t *testing.T) {
 			# HELP cortex_ingester_queries_total The total number of queries the ingester has handled.
 			# TYPE cortex_ingester_queries_total counter
 			cortex_ingester_queries_total 0
+			# HELP cortex_ingester_queried_blocks_total The total number of blocks queried that match the requested time range.
+			# TYPE cortex_ingester_queried_blocks_total counter
+			cortex_ingester_queried_blocks_total 0
+			# HELP cortex_ingester_skipped_blocks_total The total number of blocks skipped by metric name partition.
+			# TYPE cortex_ingester_skipped_blocks_total counter
+			cortex_ingester_skipped_blocks_total 0
 	`))
 	require.NoError(t, err)
 

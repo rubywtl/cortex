@@ -19,17 +19,21 @@ func TestGetPartitionedInfo(t *testing.T) {
 				Thanos: metadata.Thanos{
 					Extensions: &CortexMetaExtensions{
 						PartitionInfo: &PartitionInfo{
-							PartitionedGroupID: 123,
-							PartitionID:        8,
-							PartitionCount:     32,
+							PartitionedGroupID:       123,
+							PartitionID:              8,
+							PartitionCount:           32,
+							MetricNamePartitionID:    2,
+							MetricNamePartitionCount: 4,
 						},
 					},
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 123,
-				PartitionID:        8,
-				PartitionCount:     32,
+				PartitionedGroupID:       123,
+				PartitionID:              8,
+				PartitionCount:           32,
+				MetricNamePartitionID:    2,
+				MetricNamePartitionCount: 4,
 			},
 		},
 		{
@@ -44,9 +48,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 123,
-				PartitionID:        0,
-				PartitionCount:     0,
+				PartitionedGroupID:       123,
+				PartitionID:              0,
+				PartitionCount:           0,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 0,
 			},
 		},
 		{
@@ -61,9 +67,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        5,
-				PartitionCount:     0,
+				PartitionedGroupID:       0,
+				PartitionID:              5,
+				PartitionCount:           0,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 0,
 			},
 		},
 		{
@@ -78,9 +86,49 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        0,
-				PartitionCount:     4,
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           4,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 0,
+			},
+		},
+		{
+			name: "partition info with only MetricNamePartitionID provided",
+			meta: metadata.Meta{
+				Thanos: metadata.Thanos{
+					Extensions: &CortexMetaExtensions{
+						PartitionInfo: &PartitionInfo{
+							MetricNamePartitionID: 5,
+						},
+					},
+				},
+			},
+			expected: &PartitionInfo{
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           0,
+				MetricNamePartitionID:    5,
+				MetricNamePartitionCount: 0,
+			},
+		},
+		{
+			name: "partition info with only MetricNamePartitionCount provided",
+			meta: metadata.Meta{
+				Thanos: metadata.Thanos{
+					Extensions: &CortexMetaExtensions{
+						PartitionInfo: &PartitionInfo{
+							MetricNamePartitionCount: 4,
+						},
+					},
+				},
+			},
+			expected: &PartitionInfo{
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           0,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 4,
 			},
 		},
 		{
@@ -93,9 +141,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        0,
-				PartitionCount:     0,
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           0,
+				MetricNamePartitionCount: 0,
+				MetricNamePartitionID:    0,
 			},
 		},
 		{
@@ -108,9 +158,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        0,
-				PartitionCount:     1,
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           1,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 1,
 			},
 		},
 		{
@@ -125,9 +177,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        0,
-				PartitionCount:     1,
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           1,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 1,
 			},
 		},
 		{
@@ -154,9 +208,11 @@ func TestGetPartitionedInfo(t *testing.T) {
 				},
 			},
 			expected: &PartitionInfo{
-				PartitionedGroupID: 0,
-				PartitionID:        0,
-				PartitionCount:     1,
+				PartitionedGroupID:       0,
+				PartitionID:              0,
+				PartitionCount:           1,
+				MetricNamePartitionID:    0,
+				MetricNamePartitionCount: 1,
 			},
 		},
 		{
