@@ -1,0 +1,4 @@
+ingester_stream_chunks_when_using_blocks: true
+
+overrides:
+  fake: {}

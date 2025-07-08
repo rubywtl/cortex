@@ -148,6 +148,7 @@ type PrometheusRequest struct {
 	Step           int64
 	Timeout        time.Duration
 	Query          string
+	LogicalPlan    string
 	Path           string
 	Headers        http.Header
 	Stats          string

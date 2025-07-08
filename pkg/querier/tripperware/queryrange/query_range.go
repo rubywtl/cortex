@@ -3,6 +3,10 @@ package queryrange
 import (
 	"bytes"
 	"context"
+	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
 	"io"
 	"net/http"
 	"net/url"
@@ -95,6 +99,38 @@ func (c prometheusCodec) MergeResponse(ctx context.Context, req tripperware.Requ
 	return tripperware.MergeResponse(ctx, c.sharded, nil, responses...)
 }
 
+// NewRangeLogicalPlan converts a new range query to a logical plan
+func NewRangeLogicalPlan(opts promql.QueryOpts, qs string, start, end time.Time, interval time.Duration) ([]byte, error) {
+
+	qOpts := query.Options{
+		Start:              start,
+		End:                end,
+		Step:               interval,
+		StepsBatch:         10, // constant from promql-engine/engine/engine.go
+		LookbackDelta:      opts.LookbackDelta(),
+		EnablePerStepStats: opts.EnablePerStepStats(),
+	}
+
+	expr, err := parser.NewParser(qs, parser.WithFunctions(parser.Functions)).ParseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	planOpts := logicalplan.PlanOptions{
+		DisableDuplicateLabelCheck: false, // qf.disableDuplicateLabelChecks,
+	}
+
+	lPlan := logicalplan.NewFromAST(expr, &qOpts, planOpts)
+	optimizedPlan, _ := lPlan.Optimize(logicalplan.DefaultOptimizers)
+	byteLP, err := logicalplan.Marshal(optimizedPlan.Root())
+
+	if err != nil {
+		return nil, err
+	}
+
+	return byteLP, nil
+}
+
 func (c prometheusCodec) DecodeRequest(_ context.Context, r *http.Request, forwardHeaders []string) (tripperware.Request, error) {
 	result := tripperware.PrometheusRequest{Headers: map[string][]string{}}
 	var err error
@@ -156,13 +192,26 @@ func (c prometheusCodec) EncodeRequest(ctx context.Context, r tripperware.Reques
 	if !ok {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "invalid request format")
 	}
-	params := url.Values{
-		"start": []string{tripperware.EncodeTime(promReq.Start)},
-		"end":   []string{tripperware.EncodeTime(promReq.End)},
-		"step":  []string{encodeDurationMs(promReq.Step)},
-		"query": []string{promReq.Query},
-		"stats": []string{promReq.Stats},
+
+	// ADD logical Plan into parameter
+	start := time.Now()
+	qOpts := promql.NewPrometheusQueryOpts(true, time.Since(start))
+
+	logicalPlan, err := NewRangeLogicalPlan(qOpts, promReq.Query, time.Unix(0, promReq.Start), time.Unix(0, promReq.End), time.Duration(promReq.Step))
+	if err != nil {
+		return nil, err
 	}
+	promReq.LogicalPlan = string(logicalPlan)
+
+	params := url.Values{
+		"start":       []string{tripperware.EncodeTime(promReq.Start)},
+		"end":         []string{tripperware.EncodeTime(promReq.End)},
+		"step":        []string{encodeDurationMs(promReq.Step)},
+		"query":       []string{promReq.Query},
+		"stats":       []string{promReq.Stats},
+		"logicalPlan": []string{promReq.LogicalPlan},
+	}
+
 	u := &url.URL{
 		Path:     promReq.Path,
 		RawQuery: params.Encode(),

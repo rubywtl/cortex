@@ -3,6 +3,10 @@ package instantquery
 import (
 	"bytes"
 	"context"
+	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
 	"io"
 	"net/http"
 	"net/url"
@@ -141,14 +145,63 @@ func (c instantQueryCodec) DecodeResponse(ctx context.Context, r *http.Response,
 	return &resp, nil
 }
 
+// NewInstantLogicalPlan converts an instant query to a logical plan
+func NewInstantLogicalPlan(opts promql.QueryOpts, qs string, ts time.Time) ([]byte, error) {
+
+	qOpts := query.Options{
+		Start:              ts,
+		End:                ts,
+		Step:               0,  // default for instant query
+		StepsBatch:         10, // constant from promql-engine/engine/engine.go
+		LookbackDelta:      opts.LookbackDelta(),
+		EnablePerStepStats: opts.EnablePerStepStats(),
+	}
+
+	expr, err := parser.NewParser(qs, parser.WithFunctions(parser.Functions)).ParseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	planOpts := logicalplan.PlanOptions{
+		DisableDuplicateLabelCheck: false,
+	}
+
+	lPlan := logicalplan.NewFromAST(expr, &qOpts, planOpts)
+	optimizedPlan, _ := lPlan.Optimize(logicalplan.DefaultOptimizers)
+
+	dOptimizer := logicalplan.DistributedExecutionOptimizer{}
+	dOptimizer.Optimize(optimizedPlan.Root(), &qOpts)
+
+	byteLP, err := logicalplan.Marshal(optimizedPlan.Root())
+
+	if err != nil {
+		return nil, err
+	}
+
+	return byteLP, nil
+}
+
 func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Request) (*http.Request, error) {
 	promReq, ok := r.(*tripperware.PrometheusRequest)
 	if !ok {
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "invalid request format")
 	}
+
+	// ADD logical Plan into parameter
+	start := time.Now()
+	qOpts := promql.NewPrometheusQueryOpts(true, time.Since(start))
+
+	reqTime := time.Unix(0, promReq.Time)
+	logicalPlan, err := NewInstantLogicalPlan(qOpts, promReq.Query, reqTime)
+	if err != nil {
+		return nil, err
+	}
+	promReq.LogicalPlan = string(logicalPlan)
+
 	params := url.Values{
-		"time":  []string{tripperware.EncodeTime(promReq.Time)},
-		"query": []string{promReq.Query},
+		"time":        []string{tripperware.EncodeTime(promReq.Time)},
+		"query":       []string{promReq.Query},
+		"logicalPlan": []string{promReq.LogicalPlan},
 	}
 
 	if promReq.Stats != "" {
@@ -178,7 +231,7 @@ func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Requ
 		Method:     "GET",
 		RequestURI: u.String(), // This is what the httpgrpc code looks at.
 		URL:        u,
-		Body:       http.NoBody,
+		Body:       http.NoBody, // TODO: change to have body and put the serialized logical plan in it
 		Header:     h,
 	}
 
