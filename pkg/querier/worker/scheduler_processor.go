@@ -182,7 +182,7 @@ func (sp *schedulerProcessor) runRequest(ctx context.Context, logger log.Logger,
 	if statsEnabled {
 		stats, ctx = querier_stats.ContextWithEmptyStats(ctx)
 	}
-
+	
 	response, err := sp.handler.Handle(ctx, request)
 	if err != nil {
 		var ok bool

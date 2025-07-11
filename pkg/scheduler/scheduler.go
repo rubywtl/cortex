@@ -4,12 +4,9 @@ import (
 	"context"
 	"flag"
 	"github.com/thanos-io/promql-engine/logicalplan"
-	"github.com/thanos-io/promql-engine/query"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +29,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/scheduler/schedulerpb"
 	"github.com/cortexproject/cortex/pkg/tenant"
 	"github.com/cortexproject/cortex/pkg/util"
+	"github.com/cortexproject/cortex/pkg/util/distributedqueryutils"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/grpcclient"
 	"github.com/cortexproject/cortex/pkg/util/httpgrpcutil"
@@ -191,55 +189,6 @@ func (s *Scheduler) fragmentLogicalPlan(plan logicalplan.Plan) ([]logicalplan.Pl
 	return fragments, nil
 }
 
-func (s *Scheduler) parseURL(request *httpgrpc.HTTPRequest) (string, string, int64, int64, int64, error) {
-	// get raw query from URL,
-	urlstr := request.GetUrl()
-	urlquery, err := url.Parse(urlstr)
-	if err != nil {
-		return "", "", -1, -1, -1, err
-	}
-	q := urlquery.RawQuery
-
-	// get all params from query
-	var querystr, logicalPlan, start, end, steps string
-	parsedQ := strings.Split(q, "&")
-	for _, field := range parsedQ {
-		if strings.Contains(field, "logicalPlan") {
-			logicalPlan = strings.Split(field, "=")[1]
-		} else if strings.Contains(field, "query") {
-			querystr = strings.Split(field, "=")[1]
-		} else if strings.Contains(field, "start") {
-			start = strings.Split(field, "=")[1]
-		} else if strings.Contains(field, "end") {
-			end = strings.Split(field, "=")[1]
-		} else if strings.Contains(field, "steps") {
-			steps = strings.Split(field, "=")[1]
-		}
-	}
-	startInt, _ := strconv.ParseInt(start, 10, 64)
-	endInt, _ := strconv.ParseInt(end, 10, 64)
-	stepsInt, _ := strconv.ParseInt(end, 10, 64)
-
-	// debug message
-	print(querystr + " " + logicalPlan + " " + start + " " + end + "\n")
-
-	return logicalPlan, querystr, startInt, endInt, stepsInt, nil
-}
-
-func (s *Scheduler) insertNewLogicalPlanToURL(oldURLquery string, serializedLogicalPlan string) (string, error) {
-	// look for logicalplan field in the url query (&key=value&key=value)
-	params := strings.Split(oldURLquery, "&")
-
-	for i, param := range params {
-		if strings.HasPrefix(param, "logicalplan=") {
-			params[i] = "logicalplan=" + url.QueryEscape(serializedLogicalPlan)
-			break
-		}
-	}
-	newQuery := strings.Join(params, "&")
-	return newQuery, nil
-}
-
 // FrontendLoop handles connection from frontend.
 func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_FrontendLoopServer) error {
 	frontendAddress, frontendCtx, err := s.frontendConnected(frontend)
@@ -276,7 +225,7 @@ func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_Front
 		switch msg.GetType() {
 		case schedulerpb.ENQUEUE:
 			// get logical plan for url
-			logicalPlan, _, startInt, endInt, stepsInt, err := s.parseURL(msg.HttpRequest)
+			logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(msg.HttpRequest)
 			if err != nil {
 				return err
 			}
@@ -284,16 +233,6 @@ func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_Front
 			var fragments []logicalplan.Plan
 
 			if logicalPlan != "" { // logical plan found
-				// Expand logical plan from serialized string
-				qOpts := query.Options{
-					Start: time.Unix(startInt, 0),
-					End:   time.Unix(endInt, 0),
-					Step:  time.Duration(stepsInt),
-				}
-
-				planOpts := logicalplan.PlanOptions{
-					DisableDuplicateLabelCheck: false,
-				}
 
 				decoded, err := url.QueryUnescape(logicalPlan)
 				lplan, err := logicalplan.NewFromBytes([]byte(decoded), &qOpts, planOpts)
@@ -313,7 +252,7 @@ func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_Front
 						return err
 					}
 					newQueryStr := string(bytesLP)
-					msg.HttpRequest.Url, err = s.insertNewLogicalPlanToURL(msg.HttpRequest.GetUrl(), newQueryStr)
+					msg.HttpRequest.Url, err = distributedqueryutil.InsertNewLogicalPlanToURL(msg.HttpRequest.GetUrl(), newQueryStr)
 					if err != nil {
 						return err
 					}
