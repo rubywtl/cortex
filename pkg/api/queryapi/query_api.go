@@ -109,11 +109,7 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 
 	logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(r.URL.String())
 	if err != nil {
-		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
-	}
-
-	if err != nil {
-		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
+		return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
 	}
 
 	if logicalPlan != "" { // if there is logical plan in the request
@@ -201,10 +197,9 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 		DisableDuplicateLabelCheck: false,
 	}
 
-	logicalPlan := r.FormValue("logicalplan")
-
+	logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(r.URL.String())
 	if err != nil {
-		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
+		return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
 	}
 
 	if logicalPlan != "" { // if there is logical plan in the request
