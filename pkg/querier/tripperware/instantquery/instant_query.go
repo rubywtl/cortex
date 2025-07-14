@@ -169,9 +169,6 @@ func NewInstantLogicalPlan(opts promql.QueryOpts, qs string, ts time.Time) ([]by
 	lPlan := logicalplan.NewFromAST(expr, &qOpts, planOpts)
 	optimizedPlan, _ := lPlan.Optimize(logicalplan.DefaultOptimizers)
 
-	dOptimizer := logicalplan.DistributedExecutionOptimizer{}
-	dOptimizer.Optimize(optimizedPlan.Root(), &qOpts)
-
 	byteLP, err := logicalplan.Marshal(optimizedPlan.Root())
 
 	if err != nil {
