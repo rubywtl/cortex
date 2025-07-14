@@ -191,7 +191,8 @@ func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Requ
 	start := time.Now()
 	qOpts := promql.NewPrometheusQueryOpts(true, time.Since(start))
 
-	reqTime := time.Unix(0, promReq.Time)
+	reqTime := time.Unix(0, promReq.Time*int64(time.Millisecond))
+
 	logicalPlan, err := NewInstantLogicalPlan(qOpts, promReq.Query, reqTime)
 	if err != nil {
 		return nil, err

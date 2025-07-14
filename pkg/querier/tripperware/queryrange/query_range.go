@@ -197,7 +197,7 @@ func (c prometheusCodec) EncodeRequest(ctx context.Context, r tripperware.Reques
 	start := time.Now()
 	qOpts := promql.NewPrometheusQueryOpts(true, time.Since(start))
 
-	logicalPlan, err := NewRangeLogicalPlan(qOpts, promReq.Query, time.Unix(0, promReq.Start), time.Unix(0, promReq.End), time.Duration(promReq.Step))
+	logicalPlan, err := NewRangeLogicalPlan(qOpts, promReq.Query, time.Unix(0, promReq.Start*int64(time.Millisecond)), time.Unix(0, promReq.End*int64(time.Millisecond)), time.Duration(promReq.Step)*time.Millisecond)
 	if err != nil {
 		return nil, err
 	}

@@ -3,16 +3,14 @@ package distributedqueryutil
 import (
 	"github.com/thanos-io/promql-engine/logicalplan"
 	"github.com/thanos-io/promql-engine/query"
-	"github.com/weaveworks/common/httpgrpc"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func ParseURL(request *httpgrpc.HTTPRequest) (string, query.Options, logicalplan.PlanOptions, error) {
+func ParseURL(urlstr string) (string, query.Options, logicalplan.PlanOptions, error) {
 	// get raw query from URL,
-	urlstr := request.GetUrl()
 	urlquery, err := url.Parse(urlstr)
 	if err != nil {
 		return "", query.Options{}, logicalplan.PlanOptions{}, err
@@ -41,9 +39,9 @@ func ParseURL(request *httpgrpc.HTTPRequest) (string, query.Options, logicalplan
 	print(querystr) // debug
 
 	qOpts := query.Options{
-		Start: time.Unix(startInt, 0),
-		End:   time.Unix(endInt, 0),
-		Step:  time.Duration(stepsInt),
+		Start: time.Unix(0, startInt*int64(time.Millisecond)),
+		End:   time.Unix(0, endInt*int64(time.Millisecond)),
+		Step:  time.Duration(stepsInt) * time.Millisecond,
 	}
 
 	planOpts := logicalplan.PlanOptions{
