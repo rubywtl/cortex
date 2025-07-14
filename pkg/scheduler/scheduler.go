@@ -225,7 +225,7 @@ func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_Front
 		switch msg.GetType() {
 		case schedulerpb.ENQUEUE:
 			// get logical plan for url
-			logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(msg.HttpRequest)
+			logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(msg.HttpRequest.GetUrl())
 			if err != nil {
 				return err
 			}

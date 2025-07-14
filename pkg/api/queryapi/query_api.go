@@ -3,7 +3,11 @@ package queryapi
 import (
 	"context"
 	"fmt"
+	distributedqueryutil "github.com/cortexproject/cortex/pkg/util/distributedqueryutils"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-kit/log"
@@ -25,7 +29,7 @@ import (
 
 type QueryAPI struct {
 	queryable     storage.SampleAndChunkQueryable
-	queryEngine   promql.QueryEngine
+	engine        engine.Engine
 	now           func() time.Time
 	statsRenderer v1.StatsRenderer
 	logger        log.Logger
@@ -34,7 +38,7 @@ type QueryAPI struct {
 }
 
 func NewQueryAPI(
-	qe promql.QueryEngine,
+	e engine.Engine,
 	q storage.SampleAndChunkQueryable,
 	statsRenderer v1.StatsRenderer,
 	logger log.Logger,
@@ -42,7 +46,7 @@ func NewQueryAPI(
 	CORSOrigin *regexp.Regexp,
 ) *QueryAPI {
 	return &QueryAPI{
-		queryEngine:   qe,
+		engine:        e,
 		queryable:     q,
 		statsRenderer: statsRenderer,
 		logger:        logger,
@@ -100,10 +104,36 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 
 	ctx = engine.AddEngineTypeToContext(ctx, r)
 	ctx = querier.AddBlockStoreTypeToContext(ctx, r.Header.Get(querier.BlockStoreTypeHeader))
-	qry, err := q.queryEngine.NewRangeQuery(ctx, q.queryable, opts, r.FormValue("query"), convertMsToTime(start), convertMsToTime(end), convertMsToDuration(step))
+
+	var qry promql.Query
+
+	logicalPlan, qOpts, planOpts, err := distributedqueryutil.ParseURL(r.URL.String())
 	if err != nil {
-		return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
 	}
+
+	if err != nil {
+		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
+	}
+
+	if logicalPlan != "" { // if there is logical plan in the request
+		decoded, err := url.QueryUnescape(logicalPlan)
+		lplan, err := logicalplan.NewFromBytes([]byte(decoded), &qOpts, planOpts)
+		if err != nil {
+			return
+		}
+		qry, err = q.engine.MakeRangeQueryFromPlan(ctx, q.queryable, &opts, lplan.Root(), convertMsToTime(start), convertMsToTime(end), convertMsToDuration(step))
+		if err != nil {
+			return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+		}
+	} else {
+		qry, err = q.engine.NewRangeQuery(ctx, q.queryable, opts, r.FormValue("query"), convertMsToTime(start), convertMsToTime(end), convertMsToDuration(step))
+		if err != nil {
+			return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+
+		}
+	}
+
 	// From now on, we must only return with a finalizer in the result (to
 	// be called by the caller) or call qry.Close ourselves (which is
 	// required in the case of a panic).
@@ -156,9 +186,42 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 
 	ctx = engine.AddEngineTypeToContext(ctx, r)
 	ctx = querier.AddBlockStoreTypeToContext(ctx, r.Header.Get(querier.BlockStoreTypeHeader))
-	qry, err := q.queryEngine.NewInstantQuery(ctx, q.queryable, opts, r.FormValue("query"), convertMsToTime(ts))
+
+	var qry promql.Query
+
+	ctx = httputil.ContextFromRequest(ctx, r)
+
+	qOpts := query.Options{
+		Start: convertMsToTime(ts),
+		End:   convertMsToTime(ts),
+		Step:  0,
+	}
+
+	planOpts := logicalplan.PlanOptions{
+		DisableDuplicateLabelCheck: false,
+	}
+
+	logicalPlan := r.FormValue("logicalplan")
+
 	if err != nil {
-		return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
+	}
+
+	if logicalPlan != "" { // if there is logical plan in the request
+		decoded, err := url.QueryUnescape(logicalPlan)
+		lplan, err := logicalplan.NewFromBytes([]byte(decoded), &qOpts, planOpts)
+		if err != nil {
+			return
+		}
+		qry, err = q.engine.MakeInstantQueryFromPlan(ctx, q.queryable, &opts, lplan.Root(), convertMsToTime((ts)))
+		if err != nil {
+			return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+		}
+	} else {
+		qry, err = q.engine.NewInstantQuery(ctx, q.queryable, opts, r.FormValue("query"), convertMsToTime(ts))
+		if err != nil {
+			return invalidParamError(httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error()), "query")
+		}
 	}
 
 	// From now on, we must only return with a finalizer in the result (to
@@ -169,8 +232,6 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 			qry.Close()
 		}
 	}()
-
-	ctx = httputil.ContextFromRequest(ctx, r)
 
 	res := qry.Exec(ctx)
 	if res.Err != nil {

@@ -136,3 +136,48 @@ func fromPromQLOpts(opts promql.QueryOpts) *thanosengine.QueryOpts {
 		EnablePerStepStatsParam: opts.EnablePerStepStats(),
 	}
 }
+
+func (qf *Engine) MakeInstantQueryFromPlan(ctx context.Context, q storage.Queryable, opts *promql.QueryOpts, root logicalplan.Node, ts time.Time) (promql.Query, error) {
+	if engineType := GetEngineType(ctx); engineType == Prometheus {
+		qf.engineSwitchQueriesTotal.WithLabelValues(string(Prometheus)).Inc()
+	} else if engineType == Thanos {
+		qf.engineSwitchQueriesTotal.WithLabelValues(string(Thanos)).Inc()
+	}
+
+	if qf.thanosEngine != nil {
+		res, err := qf.thanosEngine.MakeInstantQueryFromPlan(ctx, q, fromPromQLOpts(*opts), root, ts)
+		if err != nil {
+			if thanosengine.IsUnimplemented(err) {
+				return nil, err
+			}
+			return nil, err
+		}
+		return res, nil
+	}
+
+	// no fallback engine for logical plan tho
+	// un-executable operators need to be identified earlier
+	return nil, nil
+}
+
+func (qf *Engine) MakeRangeQueryFromPlan(ctx context.Context, q storage.Queryable, opts *promql.QueryOpts, root logicalplan.Node, start time.Time, end time.Time, interval time.Duration) (promql.Query, error) {
+	if engineType := GetEngineType(ctx); engineType == Prometheus {
+		qf.engineSwitchQueriesTotal.WithLabelValues(string(Prometheus)).Inc()
+	} else if engineType == Thanos {
+		qf.engineSwitchQueriesTotal.WithLabelValues(string(Thanos)).Inc()
+	}
+	if qf.thanosEngine != nil {
+		res, err := qf.thanosEngine.MakeRangeQueryFromPlan(ctx, q, fromPromQLOpts(*opts), root, start, end, interval)
+		if err != nil {
+			if thanosengine.IsUnimplemented(err) {
+				return nil, err
+			}
+			return nil, err
+		}
+		return res, nil
+	}
+
+	// no fallback engine for logical plan tho
+	// un-executable operators need to be identified earlier
+	return nil, nil
+}
