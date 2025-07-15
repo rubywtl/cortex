@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	PrometheusCodec        = NewPrometheusCodec(false, "", "protobuf")
-	ShardedPrometheusCodec = NewPrometheusCodec(false, "", "protobuf")
+	PrometheusCodec        = NewPrometheusCodec(false, "", "protobuf", true)
+	ShardedPrometheusCodec = NewPrometheusCodec(false, "", "protobuf", true)
 )
 
 func TestRoundTrip(t *testing.T) {
@@ -31,7 +31,7 @@ func TestRoundTrip(t *testing.T) {
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var err error
 				switch r.RequestURI {
-				case query:
+				case queryFull:
 					_, err = w.Write([]byte(responseBody))
 				case queryWithWarnings:
 					_, err = w.Write([]byte(responseBodyWithWarnings))
@@ -90,7 +90,7 @@ func TestRoundTrip(t *testing.T) {
 		path, expectedBody string
 	}{
 		{"/foo", "bar"},
-		{query, responseBody},
+		{queryFull, responseBody},
 	} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			//parallel testing causes data race

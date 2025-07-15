@@ -56,6 +56,8 @@ const (
 
 	SourceRuler = "ruler"
 	SourceAPI   = "api"
+
+	StepsBatch = 10 // constant from promql-engine
 )
 
 // Codec is used to encode/decode query range requests and responses so they can be passed down to middlewares.

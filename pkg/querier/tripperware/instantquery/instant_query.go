@@ -3,6 +3,9 @@ package instantquery
 import (
 	"bytes"
 	"context"
+	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
 	"io"
 	"net/http"
 	"net/url"
@@ -38,12 +41,13 @@ var (
 
 type instantQueryCodec struct {
 	tripperware.Codec
-	compression      tripperware.Compression
-	defaultCodecType tripperware.CodecType
-	now              func() time.Time
+	distributedExecEnabled bool
+	compression            tripperware.Compression
+	defaultCodecType       tripperware.CodecType
+	now                    func() time.Time
 }
 
-func NewInstantQueryCodec(compressionStr string, defaultCodecTypeStr string) instantQueryCodec {
+func NewInstantQueryCodec(compressionStr string, defaultCodecTypeStr string, distributedExecEnabled bool) instantQueryCodec {
 	compression := tripperware.NonCompression // default
 	if compressionStr == string(tripperware.GzipCompression) {
 		compression = tripperware.GzipCompression
@@ -55,9 +59,10 @@ func NewInstantQueryCodec(compressionStr string, defaultCodecTypeStr string) ins
 	}
 
 	return instantQueryCodec{
-		compression:      compression,
-		defaultCodecType: defaultCodecType,
-		now:              time.Now,
+		distributedExecEnabled: distributedExecEnabled,
+		compression:            compression,
+		defaultCodecType:       defaultCodecType,
+		now:                    time.Now,
 	}
 }
 
@@ -141,6 +146,37 @@ func (c instantQueryCodec) DecodeResponse(ctx context.Context, r *http.Response,
 	return &resp, nil
 }
 
+func (c instantQueryCodec) NewInstantLogicalPlan(qs string, ts time.Time) ([]byte, error) {
+
+	qOpts := query.Options{
+		Start:              ts,
+		End:                ts,
+		Step:               0, // default value for instant query
+		StepsBatch:         tripperware.StepsBatch,
+		LookbackDelta:      time.Duration(0),
+		EnablePerStepStats: false,
+	}
+
+	expr, err := parser.NewParser(qs, parser.WithFunctions(parser.Functions)).ParseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	planOpts := logicalplan.PlanOptions{
+		DisableDuplicateLabelCheck: false,
+	}
+
+	logicalPlan := logicalplan.NewFromAST(expr, &qOpts, planOpts)
+	optimizedPlan, _ := logicalPlan.Optimize(logicalplan.DefaultOptimizers)
+
+	byteLP, err := logicalplan.Marshal(optimizedPlan.Root())
+	if err != nil {
+		return nil, err
+	}
+
+	return byteLP, nil
+}
+
 func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Request) (*http.Request, error) {
 	promReq, ok := r.(*tripperware.PrometheusRequest)
 	if !ok {
@@ -161,7 +197,6 @@ func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Requ
 	}
 
 	var h = http.Header{}
-
 	for n, hv := range promReq.Headers {
 		for _, v := range hv {
 			h.Add(n, v)
@@ -174,11 +209,27 @@ func (c instantQueryCodec) EncodeRequest(ctx context.Context, r tripperware.Requ
 		tripperware.SetRequestHeaders(h, c.defaultCodecType, c.compression)
 	}
 
+	var body []byte
+
+	if c.distributedExecEnabled {
+		h.Add("Content-Type", "application/json")
+		reqTime := time.Unix(0, promReq.Time*int64(time.Millisecond))
+		byteLP, err := c.NewInstantLogicalPlan(promReq.Query, reqTime)
+		if err != nil {
+			return nil, err
+		}
+
+		body = byteLP
+
+	} else {
+		body = []byte{}
+	}
+
 	req := &http.Request{
-		Method:     "GET",
+		Method:     "POST",
 		RequestURI: u.String(), // This is what the httpgrpc code looks at.
 		URL:        u,
-		Body:       http.NoBody,
+		Body:       io.NopCloser(bytes.NewReader(body)),
 		Header:     h,
 	}
 

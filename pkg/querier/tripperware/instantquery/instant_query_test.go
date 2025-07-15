@@ -25,7 +25,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/querier/tripperware"
 )
 
-var testInstantQueryCodec = NewInstantQueryCodec(string(tripperware.NonCompression), string(tripperware.ProtobufCodecType))
+var testInstantQueryCodec = NewInstantQueryCodec(string(tripperware.NonCompression), string(tripperware.ProtobufCodecType), false)
 var jsonHttpReq = &http.Request{
 	Header: map[string][]string{
 		"Accept": {"application/json"},

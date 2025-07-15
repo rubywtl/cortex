@@ -294,7 +294,7 @@ func TestSplitByDay(t *testing.T) {
 		intervalFn         IntervalFn
 	}{
 		{
-			path:               query,
+			path:               queryFull,
 			expectedBody:       string(mergedHTTPResponseBody),
 			expectedQueryCount: 2,
 			intervalFn: func(ctx context.Context, _ tripperware.Request) (context.Context, time.Duration, error) {
@@ -302,7 +302,7 @@ func TestSplitByDay(t *testing.T) {
 			},
 		},
 		{
-			path:               query,
+			path:               queryFull,
 			expectedBody:       string(mergedHTTPResponseBody),
 			expectedQueryCount: 2,
 			intervalFn:         dynamicIntervalFn(Config{SplitQueriesByInterval: day}, mockLimits{}, querysharding.NewQueryAnalyzer(), lookbackDelta),

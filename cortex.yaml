@@ -1,0 +1,181 @@
+auth_enabled: false
+
+server:
+  grpc_server_max_send_msg_size: 536870912
+
+compactor:
+  cleanup_interval: 5s
+  sharding_enabled: true
+  data_dir: /Users/benye/hub/gowork/cortex/data
+  caching_bucket_enabled: false
+
+parquet_converter:
+  data_dir: /Users/benye/hub/gowork/cortex/data1
+
+distributor:
+  shard_by_all_labels: true
+  pool:
+    health_check_ingesters: true
+
+ingester_client:
+  grpc_client_config:
+    # Configure the client to allow messages up to 100MB.
+    max_recv_msg_size: 104857600
+    max_send_msg_size: 104857600
+    grpc_compression: gzip
+
+ingester:
+  lifecycler:
+    # We want to start immediately.
+    join_after: 0
+    final_sleep: 0s
+    num_tokens: 512
+    address: 127.0.0.1
+
+    ring:
+      replication_factor: 1
+
+ruler:
+  external_url: ""
+
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: "/Users/benye/cortex-rules"
+
+querier:
+  enable_parquet_queryable: false
+  parquet_queryable_shard_cache_size: 0
+  query_ingesters_within: 24h
+  # per_step_stats_enabled: true
+  ingester_metadata_streaming: true
+
+  # Used when the blocks sharding is disabled.
+  store_gateway_addresses: localhost:9008
+  #max_samples: 1
+
+  thanos_engine: true
+  # max_subquery_total_steps: 20000
+  # store_gateway_pushdown: true
+
+query_range:
+  align_queries_with_step: true
+  cache_results: true
+  split_queries_by_interval: 24h0m0s
+
+
+alertmanager:
+  data_dir: ./data/alertmanager
+  external_url: /alertmanager
+  enable_api: true
+  sharding_enabled: true
+  sharding_ring:
+    replication_factor: 3
+    zone_awareness_enabled: false
+    heartbeat_timeout: 5m
+    heartbeat_period: 15s
+
+alertmanager_storage:
+  backend: s3
+  s3:
+    endpoint:          localhost:9000
+    bucket_name:       cortex-alertmanager
+    access_key_id:     cortex
+    secret_access_key: supersecret
+    insecure:          true
+
+blocks_storage:
+  backend: filesystem
+
+  #  users_scanner:
+  #    strategy: user_index
+
+  tsdb:
+    block_ranges_period: ["5m", "20m"]
+    dir: /tmp/cortex-tsdb-ingester
+    ship_interval: 1m
+    retention_period: 10000h
+    ## shard_by_metric_name: true
+    ## shard_by_metric_name_shards: 8
+    # out_of_order_cap_max: 32
+    # enable_native_histograms: true
+
+  bucket_store:
+    lazy_expanded_postings_enabled: true
+    # max_chunk_pool_bytes: 1
+    sync_dir: /tmp/cortex-tsdb-querier
+    consistency_delay: 1s
+    sync_interval: 1m
+    bucket_index:
+      enabled: false
+  #    index_cache:
+  #      backend: inmemory
+  #    chunks_cache:
+  #      backend: inmemory
+  #      memcached:
+  #        addresses: localhost:2021
+
+  filesystem:
+    dir: "/Users/rubywlee/cortex-objstore4"
+
+  s3:
+    endpoint:          s3-us-east-1.amazonaws.com
+    region:            us-east-1
+    bucket_name:       cortex-block-storage-144404828073
+    disable_dualstack: true
+
+#tracing:
+#  type: otel
+#  otel:
+#    otlp_endpoint: localhost:4317
+#    sample_ratio: 1
+
+storage:
+  engine: blocks
+
+store_gateway:
+  #  enabled_tenants: 567678087289_ws-1b2e4b35-7eec-4edf-9e3a-a30f16d39e7a
+  sharding_enabled: true
+  sharding_ring:
+    replication_factor: 1
+    heartbeat_period:   5s
+    heartbeat_timeout:  15s
+
+runtime_config:
+  filesystem:
+    dir: /Users/rubywlee/Downloads/cortex
+  file: runtime.yaml
+
+limits:
+  #  max_downloaded_bytes_per_request: 1
+  ruler_query_offset: 1h
+  #  parquet_converter_enabled: true
+  query_vertical_shard_size: 1
+  #  query_priority:
+  #    enabled: true
+  #    priorities:
+  #      - priority: 1
+  #        reserved_queriers: 1
+  #        query_attributes:
+  #          - regex: ^("|')?(\()?ALERTS
+  # query_vertical_shard_size: 10
+  # max_query_lookback: 32d
+  # out_of_order_time_window: 30m
+  # query_vertical_shard_size: 2
+
+frontend:
+  query_stats_enabled: true
+  scheduler_address: localhost:9006
+  distributed_exec_enabled: true
+
+frontend_worker:
+  scheduler_address: localhost:9006
+
+query_scheduler: {
+
+}
+
+api:
+  http_request_headers_to_log: ['test-id']
+  response_compression_enabled: true
+  querier_default_codec: protobuf

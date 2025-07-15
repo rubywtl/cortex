@@ -43,7 +43,7 @@ func TestRequest(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			url:      query,
+			url:      queryFull,
 			expected: &parsedRequestWithHeaders,
 		},
 		{
