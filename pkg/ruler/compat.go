@@ -381,6 +381,7 @@ func DefaultTenantManagerFactory(cfg Config, p Pusher, q storage.Queryable, engi
 				return overrides.RulerQueryOffset(userID)
 			},
 			RestoreNewRuleGroups: cfg.EnableSharding,
+			MinCleanupInterval:   cfg.MinStaleCleanupInterval,
 		}), nil
 	}
 }

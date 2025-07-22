@@ -179,6 +179,8 @@ type Config struct {
 	EnableAlertStorage bool `yaml:"enable_alert_storage"`
 	EnableAPIHA        bool `yaml:"enable_api_ha"`
 
+	MinStaleCleanupInterval time.Duration `yaml:"ruler_min_cleanup_interval"`
+
 	EnableHAEvaluation   bool          `yaml:"enable_ha_evaluation"`
 	LivenessCheckTimeout time.Duration `yaml:"liveness_check_timeout"`
 
@@ -269,6 +271,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	f.BoolVar(&cfg.EnableQueryStats, "ruler.query-stats-enabled", false, "Report query statistics for ruler queries to complete as a per user metric and as an info level log message.")
 	f.BoolVar(&cfg.DisableRuleGroupLabel, "ruler.disable-rule-group-label", false, "Disable the rule_group label on exported metrics")
 	f.BoolVar(&cfg.EnableAlertStorage, "experimental.ruler.alert-storage-enabled", false, "EXPERIMENTAL: Store state for alerts using keep_firing_for to persistent storage.")
+	f.DurationVar(&cfg.MinStaleCleanupInterval, "ruler.min-cleanup-interval", time.Minute, "Minimum interval between stale series cleanup for rule groups.")
 
 	f.BoolVar(&cfg.EnableHAEvaluation, "ruler.enable-ha-evaluation", false, "Enable high availability")
 	f.BoolVar(&cfg.EnableAPIHA, "ruler.enable-api-ha", false, "Enable high availability for API")
