@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -494,12 +495,14 @@ func TestQuerierLoopClient_WithLogicalPlan(t *testing.T) {
 	// CASE 3: request with correct logical plan --> expect to have fragment metadata
 	lp := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "up")
 	bytesLp, err := logicalplan.Marshal(lp.Root())
+	form := url.Values{}
+	form.Set("plan", string(bytesLp)) // this is to imitate how the real format of http request body
 	require.NoError(t, err)
 	frontendToScheduler(t, frontendLoop, &schedulerpb.FrontendToScheduler{
 		Type:        schedulerpb.ENQUEUE,
 		QueryID:     3,
 		UserID:      "test",
-		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: bytesLp},
+		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: []byte(form.Encode())},
 	})
 	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-2", QuerierAddress: "localhost:8000"}))
 
@@ -509,7 +512,7 @@ func TestQuerierLoopClient_WithLogicalPlan(t *testing.T) {
 	require.Equal(t, uint64(3), s3.QueryID)
 	require.Empty(t, s3.ChildFragmentID) // there is only one fragment for the logical plan, so no child fragments
 	require.Empty(t, s3.ChildAddr)
-	require.Equal(t, s3.HttpRequest.Body, bytesLp)
+	require.Equal(t, s3.HttpRequest.Body, []byte(form.Encode()))
 	require.True(t, s3.IsRoot)
 }
 

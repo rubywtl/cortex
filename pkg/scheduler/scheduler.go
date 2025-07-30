@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -294,8 +295,12 @@ func (s *Scheduler) fragmentLogicalPlan(req *httpgrpc.HTTPRequest) ([]fragmenter
 	if req.Body == nil {
 		return nil, nil
 	}
-
-	lpNode, err := logicalplan.Unmarshal(req.Body)
+	values, err := url.ParseQuery(string(req.Body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse serialized logical plan: %w", err)
+	}
+	plan := values.Get("plan")
+	lpNode, err := logicalplan.Unmarshal([]byte(plan))
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal logical plan: %w", err)
 	}
