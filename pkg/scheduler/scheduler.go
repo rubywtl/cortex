@@ -76,8 +76,8 @@ type Scheduler struct {
 
 	// Enables or disables distributed query execution functionality
 	distributedExecEnabled bool
-	fragmenter             plan_fragments.Fragmenter     // Splits logical plans into executable fragments
-	fragmentTable          *fragment_table.FragmentTable // Tracks fragment execution state and querier assignments
+	fragmenter             plan_fragments.DummyFragmenter // Splits logical plans into executable fragments
+	fragmentTable          *fragment_table.FragmentTable  // Tracks fragment execution state and querier assignments
 
 	// Maps queries to their fragment IDs for efficient query cancellation.
 	// Using this map avoids the need to scan all pending requests to find
@@ -125,7 +125,7 @@ func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer promethe
 		connectedFrontends: map[string]*connectedFrontend{},
 
 		fragmentTable:          fragment_table.NewFragmentTable(2 * time.Minute),
-		fragmenter:             plan_fragments.NewDummyFragmenter(),
+		fragmenter:             plan_fragments.DummyFragmenter{},
 		distributedExecEnabled: distributedExecEnabled,
 		queryFragmentRegistry:  map[queryKey][]uint64{},
 	}
@@ -375,7 +375,11 @@ func (s *Scheduler) fragmentAndEnqueueRequest(frontendContext context.Context, f
 
 			// if there is an error in any of the process enqueueing the fragments
 			// immediately propagate the error back
-			return err
+			if err != nil {
+				return err
+			}
+
+			return nil
 		}(); err != nil {
 			return err
 		}
