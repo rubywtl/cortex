@@ -167,7 +167,8 @@ func (s *chunkSeries) Iterator(_ chunkenc.Iterator) chunkenc.Iterator {
 	default:
 		return errSeriesIterator{err: errors.Errorf("unexpected result aggregate type %v", s.aggrs)}
 	}
-	return dedup.NewBoundedSeriesIterator(sit, s.mint, s.maxt)
+	// Not using bounded iterator here to avoid triggering a bug.
+	return sit
 }
 
 func getFirstIterator(cs ...*storepb.Chunk) chunkenc.Iterator {

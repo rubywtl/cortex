@@ -107,12 +107,7 @@ func WriteBinary(ctx context.Context, bkt objstore.BucketReader, id ulid.ULID, f
 	defer func() {
 		downloadDuration.Observe(time.Since(start).Seconds())
 	}()
-	var tmpDir = ""
-	if filename != "" {
-		tmpDir = filepath.Dir(filename)
-	}
-	parallelBucket := WrapWithParallel(bkt, tmpDir)
-	ir, indexVersion, err := newChunkedIndexReader(ctx, parallelBucket, id)
+	ir, indexVersion, err := newChunkedIndexReader(ctx, bkt, id)
 	if err != nil {
 		return nil, errors.Wrap(err, "new index reader")
 	}

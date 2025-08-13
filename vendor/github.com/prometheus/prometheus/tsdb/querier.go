@@ -79,11 +79,13 @@ func newBlockBaseQuerier(b BlockReader, mint, maxt int64) (*blockBaseQuerier, er
 
 func (q *blockBaseQuerier) LabelValues(ctx context.Context, name string, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	res, err := q.index.SortedLabelValues(ctx, name, hints, matchers...)
+	res = truncateToLimit(res, hints)
 	return res, nil, err
 }
 
-func (q *blockBaseQuerier) LabelNames(ctx context.Context, _ *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+func (q *blockBaseQuerier) LabelNames(ctx context.Context, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	res, err := q.index.LabelNames(ctx, matchers...)
+	res = truncateToLimit(res, hints)
 	return res, nil, err
 }
 
@@ -99,6 +101,13 @@ func (q *blockBaseQuerier) Close() error {
 	)
 	q.closed = true
 	return errs.Err()
+}
+
+func truncateToLimit(s []string, hints *storage.LabelHints) []string {
+	if hints != nil && hints.Limit > 0 && len(s) > hints.Limit {
+		s = s[:hints.Limit]
+	}
+	return s
 }
 
 type blockQuerier struct {
@@ -119,33 +128,34 @@ func (q *blockQuerier) Select(ctx context.Context, sortSeries bool, hints *stora
 }
 
 func selectSeriesSet(ctx context.Context, sortSeries bool, hints *storage.SelectHints, ms []*labels.Matcher,
-	index IndexReader, chunks ChunkReader, tombstones tombstones.Reader, mint, maxt int64,
+	ir IndexReader, chunks ChunkReader, tombstones tombstones.Reader, mint, maxt int64,
 ) storage.SeriesSet {
 	disableTrimming := false
 	sharded := hints != nil && hints.ShardCount > 0
 
-	p, err := PostingsForMatchers(ctx, index, ms...)
+	p, err := PostingsForMatchers(ctx, ir, ms...)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
 	if sharded {
-		p = index.ShardedPostings(p, hints.ShardIndex, hints.ShardCount)
+		p = ir.ShardedPostings(p, hints.ShardIndex, hints.ShardCount)
 	}
 	if sortSeries {
-		p = index.SortedPostings(p)
+		p = ir.SortedPostings(p)
 	}
 
 	if hints != nil {
 		mint = hints.Start
 		maxt = hints.End
 		disableTrimming = hints.DisableTrimming
+		p = index.NewLimitedPostings(p, hints.Limit)
 		if hints.Func == "series" {
 			// When you're only looking up metadata (for example series API), you don't need to load any chunks.
-			return newBlockSeriesSet(index, newNopChunkReader(), tombstones, p, mint, maxt, disableTrimming)
+			return newBlockSeriesSet(ir, newNopChunkReader(), tombstones, p, mint, maxt, disableTrimming)
 		}
 	}
 
-	return newBlockSeriesSet(index, chunks, tombstones, p, mint, maxt, disableTrimming)
+	return newBlockSeriesSet(ir, chunks, tombstones, p, mint, maxt, disableTrimming)
 }
 
 // blockChunkQuerier provides chunk querying access to a single block database.
@@ -494,21 +504,137 @@ type blockBaseSeriesSet struct {
 	disableTrimming bool
 
 	curr seriesData
+	next *seriesData
 
 	bufChks []chunks.Meta
 	builder labels.ScratchBuilder
 	err     error
+
+	checkOrder    bool
+	lastSeriesRef storage.SeriesRef
+	nextSeriesRef *storage.SeriesRef
+}
+
+func isChunksRefEqual(ref1, ref2 []chunks.Meta) bool {
+	if len(ref1) != len(ref2) {
+		return false
+	}
+	for i := range ref1 {
+		if ref1[i].Ref != ref2[i].Ref {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *blockBaseSeriesSet) logChunksInfo(logPrefix string, chks []chunks.Meta) []chunks.ChunkRef {
+	var chksRef []chunks.ChunkRef
+	var iter chunkenc.Iterator
+	for _, chk := range chks {
+		if chk.Chunk == nil {
+			chkData, chkIter, err := b.chunks.ChunkOrIterable(chk)
+			if err != nil {
+				fmt.Printf("[%s] [chunk ref %d] fail fetching chunk, %v\n", logPrefix, chk.Ref, err)
+				continue
+			} else if chkIter == nil && chkData == nil {
+				fmt.Printf("[%s] [chunk ref %d] nothing fetched from chunk\n", logPrefix, chk.Ref)
+				continue
+			}
+
+			if chkIter != nil {
+				iter = chkIter.Iterator(iter)
+			} else {
+				iter = chkData.Iterator(iter)
+			}
+
+			var samples []string
+			valType := iter.Next()
+			for ; valType != chunkenc.ValNone; valType = iter.Next() {
+				switch valType {
+				case chunkenc.ValFloat:
+					t, v := iter.At()
+					samples = append(samples, fmt.Sprintf("{\"%d\":\"%f\"}", t, v))
+				case chunkenc.ValHistogram:
+					t, h := iter.AtHistogram(nil)
+					samples = append(samples, fmt.Sprintf("{\"%d\":%s}", t, h.String()))
+				case chunkenc.ValFloatHistogram:
+					t, fh := iter.AtFloatHistogram(nil)
+					samples = append(samples, fmt.Sprintf("{\"%d\":%s}", t, fh.String()))
+				default:
+					break
+				}
+			}
+			fmt.Printf("[%s] [chunk ref %d] samples: %q\n", logPrefix, chk.Ref, samples)
+		}
+	}
+	return chksRef
 }
 
 func (b *blockBaseSeriesSet) Next() bool {
+	if b.next == nil {
+		hasNext, nextRef, next := b.getNextSeries()
+		if !hasNext {
+			return false
+		}
+		b.next = next
+		b.nextSeriesRef = nextRef
+	}
+
+	ref := *b.nextSeriesRef
+
+	hasNextNext, nextNextRef, nextNext := b.getNextSeries()
+
+	b.lastSeriesRef = ref
+	b.curr.labels = b.next.labels
+	b.curr.chks = b.next.chks
+	b.curr.intervals = b.next.intervals
+
+	if b.checkOrder && hasNextNext {
+		// Handle duplicate series if needed
+		compareLabels := labels.Compare(nextNext.labels, b.next.labels)
+		if compareLabels == 0 {
+			if isChunksRefEqual(nextNext.chks, b.next.chks) {
+				// Merge duplicate series
+				if mergedSeries, err := b.mergeChunkSeries(*b.next, *nextNext); err == nil {
+					fmt.Printf("merged chunk for series %d\n", ref)
+					b.curr.labels = mergedSeries.labels
+					b.curr.chks = mergedSeries.chks
+					b.curr.intervals = mergedSeries.intervals
+					b.next = nil
+					return true
+				} else {
+					b.err = fmt.Errorf("merging chunk series: %w", err)
+					return false
+				}
+			} else {
+				nextChksRef := b.logChunksInfo(fmt.Sprintf("last series ref %d", ref), b.next.chks)
+				nextNextChksRef := b.logChunksInfo(fmt.Sprintf("current series ref %d", ref), nextNext.chks)
+				fmt.Printf("out-of-order series found with same label set %q, last ref %d, ref %d, last chunks %q, current chunks %q\n", nextNext.labels, ref, nextNextRef, nextChksRef, nextNextChksRef)
+			}
+		} else if compareLabels < 0 {
+			fmt.Printf("out-of-order series found with label set %q ref %d, last label set %q, ref %d\n", nextNext.labels, nextNextRef, b.next.labels, ref)
+		}
+	}
+
+	if hasNextNext {
+		b.next = nextNext
+		b.nextSeriesRef = nextNextRef
+	} else {
+		b.next = nil
+	}
+	return true
+}
+
+func (b *blockBaseSeriesSet) getNextSeries() (bool, *storage.SeriesRef, *seriesData) {
 	for b.p.Next() {
-		if err := b.index.Series(b.p.At(), &b.builder, &b.bufChks); err != nil {
+		ref := b.p.At()
+		if err := b.index.Series(ref, &b.builder, &b.bufChks); err != nil {
 			// Postings may be stale. Skip if no underlying series exists.
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
 			b.err = fmt.Errorf("get series %d: %w", b.p.At(), err)
-			return false
+			return false, nil, nil
 		}
 
 		if len(b.bufChks) == 0 {
@@ -518,7 +644,7 @@ func (b *blockBaseSeriesSet) Next() bool {
 		intervals, err := b.tombstones.Get(b.p.At())
 		if err != nil {
 			b.err = fmt.Errorf("get tombstones: %w", err)
-			return false
+			return false, nil, nil
 		}
 
 		// NOTE:
@@ -573,12 +699,43 @@ func (b *blockBaseSeriesSet) Next() bool {
 			intervals = intervals.Add(tombstones.Interval{Mint: b.maxt + 1, Maxt: math.MaxInt64})
 		}
 
-		b.curr.labels = b.builder.Labels()
-		b.curr.chks = chks
-		b.curr.intervals = intervals
-		return true
+		lbls := b.builder.Labels()
+
+		return true, &ref, &seriesData{labels: lbls, chks: chks, intervals: intervals}
 	}
-	return false
+	return false, nil, nil
+}
+
+func (b *blockBaseSeriesSet) mergeChunkSeries(series1 seriesData, series2 seriesData) (*seriesData, error) {
+	mergeFunc := storage.NewCompactingChunkSeriesMerger(storage.ChainedSeriesMerge)
+
+	seriesEntry1 := &chunkSeriesEntry{
+		chunks:     b.chunks,
+		blockID:    b.blockID,
+		seriesData: series1,
+	}
+
+	seriesEntry2 := &chunkSeriesEntry{
+		chunks:     b.chunks,
+		blockID:    b.blockID,
+		seriesData: series2,
+	}
+
+	// Merge the two series
+	mergedSeries := mergeFunc(seriesEntry1, seriesEntry2)
+
+	// Extract chunks from the merged series
+	chunkIter := mergedSeries.Iterator(nil)
+	mergedChks := make([]chunks.Meta, 0)
+	for chunkIter.Next() {
+		mergedChks = append(mergedChks, chunkIter.At())
+	}
+
+	if err := chunkIter.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating merged chunks: %w", err)
+	}
+
+	return &seriesData{labels: series1.labels, chks: mergedChks}, nil
 }
 
 func (b *blockBaseSeriesSet) Err() error {
@@ -1112,6 +1269,22 @@ func NewBlockChunkSeriesSet(id ulid.ULID, i IndexReader, c ChunkReader, t tombst
 			mint:            mint,
 			maxt:            maxt,
 			disableTrimming: disableTrimming,
+		},
+	}
+}
+
+func NewBlockChunkSeriesSetWithCheckOrder(id ulid.ULID, i IndexReader, c ChunkReader, t tombstones.Reader, p index.Postings, mint, maxt int64, disableTrimming bool) storage.ChunkSeriesSet {
+	return &blockChunkSeriesSet{
+		blockBaseSeriesSet{
+			blockID:         id,
+			index:           i,
+			chunks:          c,
+			tombstones:      t,
+			p:               p,
+			mint:            mint,
+			maxt:            maxt,
+			disableTrimming: disableTrimming,
+			checkOrder:      true,
 		},
 	}
 }

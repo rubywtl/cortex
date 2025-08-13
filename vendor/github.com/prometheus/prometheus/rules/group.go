@@ -222,6 +222,12 @@ func (g *Group) run(ctx context.Context) {
 		},
 	})
 
+	cleanupInterval := 2 * g.interval
+	if cleanupInterval < g.opts.MinCleanupInterval {
+		cleanupInterval = g.opts.MinCleanupInterval
+		g.logger.Info("Overriding stale series cleanup interval", "cleanupInterval", cleanupInterval)
+	}
+
 	// The assumption here is that since the ticker was started after having
 	// waited for `evalTimestamp` to pass, the ticks will trigger soon
 	// after each `evalTimestamp + N * g.interval` occurrence.
@@ -245,7 +251,7 @@ func (g *Group) run(ctx context.Context) {
 			// renamed rule, it should already be started.
 			select {
 			case <-g.managerDone:
-			case <-time.After(2 * g.interval):
+			case <-time.After(cleanupInterval):
 				g.cleanupStaleSeries(ctx, now)
 			}
 		}(time.Now())

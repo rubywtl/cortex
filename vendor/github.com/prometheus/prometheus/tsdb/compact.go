@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/prometheus/prometheus/model/labels"
 	"io"
 	"log/slog"
 	"os"
@@ -821,7 +822,7 @@ func (c DefaultBlockPopulator) PopulateBlock(ctx context.Context, metrics *Compa
 
 		postings := postingsFunc(ctx, indexr)
 		// Blocks meta is half open: [min, max), so subtract 1 to ensure we don't hold samples with exact meta.MaxTime timestamp.
-		sets = append(sets, NewBlockChunkSeriesSet(b.Meta().ULID, indexr, chunkr, tombsr, postings, meta.MinTime, meta.MaxTime-1, false))
+		sets = append(sets, NewBlockChunkSeriesSetWithCheckOrder(b.Meta().ULID, indexr, chunkr, tombsr, postings, meta.MinTime, meta.MaxTime-1, false))
 		syms := indexr.Symbols()
 		if i == 0 {
 			symbols = syms
@@ -869,6 +870,7 @@ func (c DefaultBlockPopulator) PopulateBlock(ctx context.Context, metrics *Compa
 			chks = append(chks, chksIter.At())
 		}
 		if err := chksIter.Err(); err != nil {
+			logOOOChunks(s.Labels(), chks, logger)
 			return fmt.Errorf("chunk iter: %w", err)
 		}
 
@@ -909,4 +911,29 @@ func (c DefaultBlockPopulator) PopulateBlock(ctx context.Context, metrics *Compa
 	}
 
 	return nil
+}
+
+func logOOOChunks(lbls labels.Labels, chks []chunks.Meta, logger *slog.Logger) {
+	if len(chks) <= 1 {
+		return
+	}
+	pChk := chks[0]
+	for i := 1; i < len(chks); i++ {
+		cChk := chks[i]
+		if cChk.MinTime <= pChk.MaxTime {
+			logger.Warn("AMP ooo chunck - logOOOChunks",
+				"num_chunks_for_series", len(chks),
+				"pRef", pChk.Ref,
+				"cRef", cChk.Ref,
+				"pMinTime", pChk.MinTime,
+				"pMaxTime", pChk.MaxTime,
+				"cMinTime", cChk.MinTime,
+				"cMaxTime", cChk.MaxTime,
+				"pSamples", pChk.Chunk.NumSamples(),
+				"cSamples", cChk.Chunk.NumSamples(),
+				"labels", lbls.String(),
+			)
+		}
+		pChk = cChk
+	}
 }

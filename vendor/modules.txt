@@ -211,9 +211,10 @@ github.com/aws/aws-sdk-go/service/sso/ssoiface
 github.com/aws/aws-sdk-go/service/ssooidc
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
-# github.com/aws/aws-sdk-go-v2 v1.36.3
+# github.com/aws/aws-sdk-go-v2 v1.36.4
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/aws
+github.com/aws/aws-sdk-go-v2/aws/arn
 github.com/aws/aws-sdk-go-v2/aws/defaults
 github.com/aws/aws-sdk-go-v2/aws/middleware
 github.com/aws/aws-sdk-go-v2/aws/protocol/query
@@ -237,10 +238,10 @@ github.com/aws/aws-sdk-go-v2/internal/shareddefaults
 github.com/aws/aws-sdk-go-v2/internal/strings
 github.com/aws/aws-sdk-go-v2/internal/sync/singleflight
 github.com/aws/aws-sdk-go-v2/internal/timeconv
-# github.com/aws/aws-sdk-go-v2/config v1.29.15
+# github.com/aws/aws-sdk-go-v2/config v1.29.16
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/config
-# github.com/aws/aws-sdk-go-v2/credentials v1.17.68
+# github.com/aws/aws-sdk-go-v2/credentials v1.17.69
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/credentials
 github.com/aws/aws-sdk-go-v2/credentials/ec2rolecreds
@@ -249,14 +250,14 @@ github.com/aws/aws-sdk-go-v2/credentials/endpointcreds/internal/client
 github.com/aws/aws-sdk-go-v2/credentials/processcreds
 github.com/aws/aws-sdk-go-v2/credentials/ssocreds
 github.com/aws/aws-sdk-go-v2/credentials/stscreds
-# github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.30
+# github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.31
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds/internal/config
-# github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.34
+# github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.35
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/internal/configsources
-# github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.34
+# github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.35
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 # github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3
@@ -265,20 +266,25 @@ github.com/aws/aws-sdk-go-v2/internal/ini
 # github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.3
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
-# github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.15
+# github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.16
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
-# github.com/aws/aws-sdk-go-v2/service/sso v1.25.3
+# github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.6
+## explicit; go 1.22
+github.com/aws/aws-sdk-go-v2/service/secretsmanager
+github.com/aws/aws-sdk-go-v2/service/secretsmanager/internal/endpoints
+github.com/aws/aws-sdk-go-v2/service/secretsmanager/types
+# github.com/aws/aws-sdk-go-v2/service/sso v1.25.4
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/sso
 github.com/aws/aws-sdk-go-v2/service/sso/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/sso/types
-# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.1
+# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.2
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/ssooidc
 github.com/aws/aws-sdk-go-v2/service/ssooidc/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/ssooidc/types
-# github.com/aws/aws-sdk-go-v2/service/sts v1.33.20
+# github.com/aws/aws-sdk-go-v2/service/sts v1.33.21
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/sts
 github.com/aws/aws-sdk-go-v2/service/sts/internal/endpoints
@@ -966,14 +972,17 @@ github.com/prometheus-community/parquet-common/util
 # github.com/prometheus-community/prom-label-proxy v0.11.1
 ## explicit; go 1.23.0
 github.com/prometheus-community/prom-label-proxy/injectproxy
-# github.com/prometheus/alertmanager v0.28.1
+# github.com/prometheus/alertmanager v0.28.1 => github.com/amazon-contributing/alertmanager v0.0.0-20250813043700-36aec5cdd182
 ## explicit; go 1.22.0
+github.com/prometheus/alertmanager/alertobserver
 github.com/prometheus/alertmanager/api
 github.com/prometheus/alertmanager/api/metrics
 github.com/prometheus/alertmanager/api/v2
 github.com/prometheus/alertmanager/api/v2/client
 github.com/prometheus/alertmanager/api/v2/client/alert
 github.com/prometheus/alertmanager/api/v2/client/alertgroup
+github.com/prometheus/alertmanager/api/v2/client/alertgroupinfolist
+github.com/prometheus/alertmanager/api/v2/client/alertinfo
 github.com/prometheus/alertmanager/api/v2/client/general
 github.com/prometheus/alertmanager/api/v2/client/receiver
 github.com/prometheus/alertmanager/api/v2/client/silence
@@ -982,6 +991,8 @@ github.com/prometheus/alertmanager/api/v2/restapi
 github.com/prometheus/alertmanager/api/v2/restapi/operations
 github.com/prometheus/alertmanager/api/v2/restapi/operations/alert
 github.com/prometheus/alertmanager/api/v2/restapi/operations/alertgroup
+github.com/prometheus/alertmanager/api/v2/restapi/operations/alertgroupinfolist
+github.com/prometheus/alertmanager/api/v2/restapi/operations/alertinfo
 github.com/prometheus/alertmanager/api/v2/restapi/operations/general
 github.com/prometheus/alertmanager/api/v2/restapi/operations/receiver
 github.com/prometheus/alertmanager/api/v2/restapi/operations/silence
@@ -1016,6 +1027,8 @@ github.com/prometheus/alertmanager/notify/wechat
 github.com/prometheus/alertmanager/pkg/labels
 github.com/prometheus/alertmanager/provider
 github.com/prometheus/alertmanager/provider/mem
+github.com/prometheus/alertmanager/secrets
+github.com/prometheus/alertmanager/secrets/providers
 github.com/prometheus/alertmanager/silence
 github.com/prometheus/alertmanager/silence/silencepb
 github.com/prometheus/alertmanager/store
@@ -1023,6 +1036,7 @@ github.com/prometheus/alertmanager/template
 github.com/prometheus/alertmanager/timeinterval
 github.com/prometheus/alertmanager/types
 github.com/prometheus/alertmanager/ui
+github.com/prometheus/alertmanager/util/callback
 # github.com/prometheus/client_golang v1.23.0-rc.1
 ## explicit; go 1.23.0
 github.com/prometheus/client_golang/api
@@ -1063,7 +1077,7 @@ github.com/prometheus/otlptranslator
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/prometheus/prometheus v0.305.1-0.20250721065454-b09cf6be8d56
+# github.com/prometheus/prometheus v0.305.1-0.20250721065454-b09cf6be8d56 => github.com/aws-observability/prometheus v0.50.2-0.20250813043649-16946ba249f7
 ## explicit; go 1.23.0
 github.com/prometheus/prometheus/config
 github.com/prometheus/prometheus/discovery
@@ -1200,7 +1214,7 @@ github.com/thanos-io/objstore/providers/gcs
 github.com/thanos-io/objstore/providers/s3
 github.com/thanos-io/objstore/providers/swift
 github.com/thanos-io/objstore/tracing/opentracing
-# github.com/thanos-io/promql-engine v0.0.0-20250726034445-91e6e32a36a7
+# github.com/thanos-io/promql-engine v0.0.0-20250726034445-91e6e32a36a7 => github.com/aws-observability/thanos-promql-engine v0.0.0-20250813043703-7711035186c6
 ## explicit; go 1.24.0
 github.com/thanos-io/promql-engine/api
 github.com/thanos-io/promql-engine/engine
@@ -1224,7 +1238,7 @@ github.com/thanos-io/promql-engine/query
 github.com/thanos-io/promql-engine/ringbuffer
 github.com/thanos-io/promql-engine/storage
 github.com/thanos-io/promql-engine/storage/prometheus
-# github.com/thanos-io/thanos v0.39.3-0.20250729120336-88d0ae8071cb
+# github.com/thanos-io/thanos v0.39.3-0.20250729120336-88d0ae8071cb => github.com/aws-observability/thanos v0.33.0-rc.0.0.20250813043608-3957f7dfbfd8
 ## explicit; go 1.24.0
 github.com/thanos-io/thanos/pkg/api/query/querypb
 github.com/thanos-io/thanos/pkg/block
@@ -1983,7 +1997,6 @@ sigs.k8s.io/yaml/goyaml.v3
 # github.com/weaveworks/common => github.com/cortexproject/weaveworks-common v0.0.0-20250806170222-876764c695f2
 # git.apache.org/thrift.git => github.com/apache/thrift v0.0.0-20180902110319-2566ecd5d999
 # github.com/gocql/gocql => github.com/grafana/gocql v0.0.0-20200605141915-ba5dc39ece85
-# github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
 # github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20220714140823-09ffed8adbbe
 # github.com/vimeo/galaxycache => github.com/thanos-community/galaxycache v0.0.0-20211122094458-3a32041a1f1e
 # github.com/go-openapi/spec => github.com/go-openapi/spec v0.20.6
@@ -1991,3 +2004,5 @@ sigs.k8s.io/yaml/goyaml.v3
 # github.com/google/gnostic => github.com/googleapis/gnostic v0.6.9
 # gopkg.in/alecthomas/kingpin.v2 => github.com/alecthomas/kingpin v1.3.8-0.20210301060133-17f40c25f497
 # google.golang.org/grpc => google.golang.org/grpc v1.71.2
+# github.com/prometheus/prometheus => github.com/aws-observability/prometheus v0.50.2-0.20250813043649-16946ba249f7
+# github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c

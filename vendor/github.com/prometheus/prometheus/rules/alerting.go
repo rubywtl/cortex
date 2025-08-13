@@ -627,3 +627,10 @@ func (r *AlertingRule) String() string {
 
 	return string(byt)
 }
+
+// SetActiveAlerts updates the active alerts of the alerting rule.
+func (r *AlertingRule) SetActiveAlerts(alerts map[uint64]*Alert) {
+	r.activeMtx.Lock()
+	defer r.activeMtx.Unlock()
+	r.active = alerts
+}

@@ -384,6 +384,17 @@ type wrapOOOHeadChunk struct {
 // Call with s locked.
 func (h *Head) chunkFromSeries(s *memSeries, cid chunks.HeadChunkID, isOOO bool, mint, maxt int64, isoState *isolationState, copyLastChunk bool) (chunkenc.Chunk, int64, error) {
 	if isOOO {
+		h.logger.Warn("AMP ooo chunck - chunkFromSeries",
+			"minTime", h.minTime,
+			"maxTime", h.maxTime,
+			"minOOOTime", h.minOOOTime,
+			"maxOOOTime", h.maxOOOTime,
+			"series minTime", s.minTime(),
+			"seies maxTime", s.maxTime(),
+			"cid", cid,
+			"isOOONil", s.ooo == nil,
+			"ref", s.ref,
+			"labels", s.labels().String())
 		chk, maxTime, err := s.oooChunk(cid, h.chunkDiskMapper, &h.memChunkPool)
 		return wrapOOOHeadChunk{chk}, maxTime, err
 	}
@@ -490,6 +501,10 @@ func (s *memSeries) chunk(id chunks.HeadChunkID, chunkDiskMapper *chunks.ChunkDi
 // oooChunk returns the chunk for the HeadChunkID by m-mapping it from the disk.
 // It never returns the head OOO chunk.
 func (s *memSeries) oooChunk(id chunks.HeadChunkID, chunkDiskMapper *chunks.ChunkDiskMapper, _ *sync.Pool) (chunk chunkenc.Chunk, maxTime int64, err error) {
+	if s.ooo == nil {
+		return nil, 0, storage.ErrNotFound
+	}
+
 	// ix represents the index of chunk in the s.ooo.oooMmappedChunks slice. The chunk id's are
 	// incremented by 1 when new chunk is created, hence (id - firstOOOChunkID) gives the slice index.
 	ix := int(id) - int(s.ooo.firstOOOChunkID)

@@ -433,7 +433,7 @@ func (w *Writer) AddSeries(ref storage.SeriesRef, lset labels.Labels, chunks ...
 	if err := w.ensureStage(idxStageSeries); err != nil {
 		return err
 	}
-	if labels.Compare(lset, w.lastSeries) <= 0 {
+	if labels.Compare(lset, w.lastSeries) < 0 {
 		return fmt.Errorf("out-of-order series added with label set %q, last label set %q", lset, w.lastSeries)
 	}
 
@@ -456,6 +456,10 @@ func (w *Writer) AddSeries(ref storage.SeriesRef, lset labels.Labels, chunks ...
 			return fmt.Errorf("chunk maxT %d is less than minT %d", c.MaxTime, c.MinTime)
 		}
 		lastMaxT = c.MaxTime
+	}
+
+	if labels.Compare(lset, w.lastSeries) == 0 {
+		fmt.Printf("duplicate series added with label set %q and ref %d, previous last chunk ref %d, current last chunk ref %d", lset, ref, w.lastChunkRef, lastChunkRef)
 	}
 
 	// We add padding to 16 bytes to increase the addressable space we get through 4 byte

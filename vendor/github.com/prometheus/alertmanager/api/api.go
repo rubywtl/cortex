@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/route"
 
+	"github.com/prometheus/alertmanager/alertobserver"
 	apiv2 "github.com/prometheus/alertmanager/api/v2"
 	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
@@ -33,6 +34,7 @@ import (
 	"github.com/prometheus/alertmanager/provider"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/types"
+	"github.com/prometheus/alertmanager/util/callback"
 )
 
 // API represents all APIs of Alertmanager.
@@ -78,7 +80,15 @@ type Options struct {
 	// GroupFunc returns a list of alert groups. The alerts are grouped
 	// according to the current active configuration. Alerts returned are
 	// filtered by the arguments provided to the function.
-	GroupFunc func(func(*dispatch.Route) bool, func(*types.Alert, time.Time) bool) (dispatch.AlertGroups, map[model.Fingerprint][]string)
+	GroupFunc func(func(*dispatch.Route) bool, func(*types.Alert, time.Time) bool, func(string) bool) (dispatch.AlertGroups, map[model.Fingerprint][]string)
+	// GroupInfoFunc returns a list of alert groups information. The alerts are grouped
+	// according to the current active configuration. This function will not return the alerts inside each group.
+	GroupInfoFunc func(func(*dispatch.Route) bool) dispatch.AlertGroupInfos
+	// APICallback define the callback function that each api call will perform before returned.
+	APICallback callback.Callback
+	// AlertLCObserver is used to add hooks to the different alert life cycle events.
+	// If nil then no observer methods will be invoked in the life cycle events.
+	AlertLCObserver alertobserver.LifeCycleObserver
 }
 
 func (o Options) validate() error {
@@ -121,12 +131,15 @@ func New(opts Options) (*API, error) {
 	v2, err := apiv2.NewAPI(
 		opts.Alerts,
 		opts.GroupFunc,
+		opts.GroupInfoFunc,
 		opts.AlertStatusFunc,
 		opts.GroupMutedFunc,
 		opts.Silences,
+		opts.APICallback,
 		opts.Peer,
 		l.With("version", "v2"),
 		opts.Registry,
+		opts.AlertLCObserver,
 	)
 	if err != nil {
 		return nil, err

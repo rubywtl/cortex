@@ -229,6 +229,9 @@ type Engine struct {
 	noStepSubqueryIntervalFn func(time.Duration) time.Duration
 }
 
+func (e *Engine) SetReportStats(f func(ctx context.Context, qs stats.QueryStats, err error)) {
+}
+
 func (e *Engine) MakeInstantQuery(ctx context.Context, q storage.Queryable, opts *QueryOpts, qs string, ts time.Time) (promql.Query, error) {
 	idx, err := e.activeQueryTracker.Insert(ctx, qs)
 	if err != nil {

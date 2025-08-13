@@ -113,18 +113,19 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.36.3 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.29.15 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.17.68 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.30 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.34 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.34 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.36.4 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.29.16 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.69 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.31 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.35 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.15 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.25.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.33.20 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.16 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.25.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.33.21 // indirect
 	github.com/aws/smithy-go v1.22.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -306,8 +307,6 @@ replace git.apache.org/thrift.git => github.com/apache/thrift v0.0.0-20180902110
 // Use fork of gocql that has gokit logs and Prometheus metrics.
 replace github.com/gocql/gocql => github.com/grafana/gocql v0.0.0-20200605141915-ba5dc39ece85
 
-replace github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
-
 // Replace memberlist with Grafana's fork which includes some fixes that haven't been merged upstream yet
 replace github.com/hashicorp/memberlist => github.com/grafana/memberlist v0.3.1-0.20220714140823-09ffed8adbbe
 
@@ -331,3 +330,13 @@ replace google.golang.org/grpc => google.golang.org/grpc v1.71.2
 
 // See https://github.com/envoyproxy/go-control-plane/issues/1083 as this version introduces checksum mismatch.
 exclude github.com/envoyproxy/go-control-plane/envoy v1.32.3
+
+replace github.com/prometheus/prometheus => github.com/aws-observability/prometheus v0.50.2-0.20250813043649-16946ba249f7
+
+replace github.com/thanos-io/thanos v0.39.3-0.20250729120336-88d0ae8071cb => github.com/aws-observability/thanos v0.33.0-rc.0.0.20250813043608-3957f7dfbfd8
+
+replace github.com/thanos-io/promql-engine v0.0.0-20250726034445-91e6e32a36a7 => github.com/aws-observability/thanos-promql-engine v0.0.0-20250813043703-7711035186c6
+
+replace github.com/bradfitz/gomemcache => github.com/aws-observability/gomemcache v0.0.0-20240306233126-1bbebfb3ba1c
+
+replace github.com/prometheus/alertmanager v0.28.1 => github.com/amazon-contributing/alertmanager v0.0.0-20250813043700-36aec5cdd182

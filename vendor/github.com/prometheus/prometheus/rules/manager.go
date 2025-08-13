@@ -128,6 +128,7 @@ type ManagerOptions struct {
 	// during restarts. This flag provides an option to restore the `for` state when new rule groups are
 	// added to an existing manager
 	RestoreNewRuleGroups bool
+	MinCleanupInterval   time.Duration
 
 	Metrics *Metrics
 }
