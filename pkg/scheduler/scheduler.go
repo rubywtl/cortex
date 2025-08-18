@@ -44,6 +44,11 @@ var (
 	errSchedulerIsNotRunning = errors.New("scheduler is not running")
 )
 
+const (
+	maxRetries = 3
+	retryDelay = 100 * time.Millisecond
+)
+
 // Scheduler is responsible for queueing and dispatching queries to Queriers.
 type Scheduler struct {
 	services.Service
@@ -113,7 +118,7 @@ func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer promethe
 
 		pendingRequests:    map[RequestKey]*schedulerRequest{},
 		connectedFrontends: map[string]*connectedFrontend{},
-		fragmentTable:      plan_fragments.NewFragmentTable(),
+		fragmentTable:      plan_fragments.NewFragmentTable(2 * time.Minute),
 	}
 
 	s.queueLength = promauto.With(registerer).NewGaugeVec(prometheus.GaugeOpts{
@@ -422,7 +427,13 @@ func (s *Scheduler) enqueueRequest(frontendContext context.Context, frontendAddr
 				}
 
 				// modify request with fragment info
-				msg.HttpRequest.Body, err = s.updatePlanInHTTPRequest(frag)
+				newBody, err := s.updatePlanInHTTPRequest(frag)
+				msg.HttpRequest = &httpgrpc.HTTPRequest{
+					Method:  msg.HttpRequest.Method,
+					Url:     msg.HttpRequest.Url,
+					Headers: msg.HttpRequest.Headers,
+					Body:    newBody,
+				}
 				if err != nil {
 					return err
 				}
@@ -484,7 +495,7 @@ func (s *Scheduler) cancelRequestAndRemoveFromPending(frontendAddr string, query
 	if req != nil {
 		req.ctxCancel()
 	}
-	s.fragmentTable.ClearMappings(queryID)
+	// s.fragmentTable.ClearMappings(queryID)
 	delete(s.pendingRequests, key)
 }
 
@@ -545,12 +556,32 @@ func (s *Scheduler) QuerierLoop(querier schedulerpb.SchedulerForQuerier_QuerierL
 			continue
 		}
 
+		if r.fragment.IsRoot {
+			ok := s.waitForChildToBeReady(r.queryID, r.fragment.ChildIDs)
+			if ok != true {
+				return fmt.Errorf("failed to get child address mappings after %d attempts for queryID: %d", maxRetries, r.queryID)
+			}
+		}
+
 		if err := s.forwardRequestToQuerier(querier, r, querierAddress); err != nil {
 			return err
 		}
 	}
-
 	return errSchedulerIsNotRunning
+}
+
+func (s *Scheduler) waitForChildToBeReady(queryID uint64, childIDs []uint64) bool {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		_, ok := s.fragmentTable.GetMapping(queryID, childIDs)
+		if ok {
+			return true
+		}
+		if attempt == maxRetries {
+			return false
+		}
+		time.Sleep(retryDelay)
+	}
+	return false
 }
 
 func (s *Scheduler) NotifyQuerierShutdown(_ context.Context, req *schedulerpb.NotifyQuerierShutdownRequest) (*schedulerpb.NotifyQuerierShutdownResponse, error) {
@@ -569,14 +600,10 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 	errCh := make(chan error, 1)
 	go func() {
 		childAddrs := []string{}
-		var ok bool
 		if len(req.fragment.ChildIDs) != 0 {
-			childAddrs, ok = s.fragmentTable.GetMapping(req.queryID, req.fragment.ChildIDs)
-			if !ok { // if we don't have the child fragment address
-				//implement retry logic?
-				return
-			}
+			childAddrs, _ = s.fragmentTable.GetMapping(req.queryID, req.fragment.ChildIDs)
 		}
+
 		err := querier.Send(&schedulerpb.SchedulerToQuerier{
 			UserID:          req.userID,
 			QueryID:         req.queryID,
@@ -590,11 +617,7 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 		})
 
 		if s.distributedExecEnabled {
-			if req.fragment.IsRoot {
-				s.fragmentTable.ClearMappings(req.queryID)
-			} else {
-				s.fragmentTable.AddMapping(req.queryID, req.fragment.FragmentID, querierAddress)
-			}
+			s.fragmentTable.AddMapping(req.queryID, req.fragment.FragmentID, querierAddress)
 		}
 
 		if err != nil {
