@@ -77,7 +77,7 @@ func (r *Remote) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	r.FragmentKey = *MakeFragmentKey(re.QueryID, re.FragmentID)
+	r.FragmentKey = MakeFragmentKey(re.QueryID, re.FragmentID)
 	r.FragmentAddr = re.FragmentAddr
 	return nil
 }
@@ -160,7 +160,7 @@ func newDistributedRemoteExecution(ctx context.Context, pool *client.Pool, fragm
 		currentStep: queryOpts.Start.UnixMilli(),
 		numSteps:    queryOpts.NumSteps(),
 
-		batchSize:   10,
+		batchSize:   1000,
 		fragmentKey: fragmentKey,
 		addr:        childIDToAddr[fragmentKey.fragmentID],
 		buffer:      nil,
@@ -176,6 +176,7 @@ func newDistributedRemoteExecution(ctx context.Context, pool *client.Pool, fragm
 }
 
 func (d *DistributedRemoteExecution) Series(ctx context.Context) ([]labels.Labels, error) {
+
 	if d.series != nil {
 		return d.series, nil
 	}

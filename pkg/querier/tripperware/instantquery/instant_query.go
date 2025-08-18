@@ -3,7 +3,6 @@ package instantquery
 import (
 	"bytes"
 	"context"
-	"github.com/cortexproject/cortex/pkg/engine/distributed_execution"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +15,7 @@ import (
 	otlog "github.com/opentracing/opentracing-go/log"
 	"github.com/prometheus/common/model"
 	v1 "github.com/prometheus/prometheus/web/api/v1"
+	"github.com/thanos-io/promql-engine/logicalplan"
 	"github.com/weaveworks/common/httpgrpc"
 
 	"github.com/cortexproject/cortex/pkg/api/queryapi"
@@ -172,7 +172,7 @@ func (c instantQueryCodec) getSerializedBody(promReq *tripperware.PrometheusRequ
 	var err error
 
 	if promReq.LogicalPlan != nil {
-		byteLP, err = distributed_execution.Marshal(promReq.LogicalPlan.Root())
+		byteLP, err = logicalplan.Marshal(promReq.LogicalPlan.Root())
 		if err != nil {
 			return nil, err
 		}

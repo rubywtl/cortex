@@ -33,8 +33,8 @@ type FragmentKey struct {
 	fragmentID uint64
 }
 
-func MakeFragmentKey(queryID uint64, fragmentID uint64) *FragmentKey {
-	return &FragmentKey{
+func MakeFragmentKey(queryID uint64, fragmentID uint64) FragmentKey {
+	return FragmentKey{
 		queryID:    queryID,
 		fragmentID: fragmentID,
 	}

@@ -2,7 +2,6 @@ package distributed_execution
 
 import (
 	"context"
-	"fmt"
 )
 
 type fragmentMetadataKey struct{}
@@ -14,11 +13,7 @@ type fragmentMetadata struct {
 	isRoot        bool
 }
 
-func InjectFragmentMetaData(ctx context.Context, fragmentID uint64, queryID uint64, isRoot bool, childIDs []uint64, childAddr []string) (context.Context, error) {
-	if len(childIDs) != len(childAddr) {
-		return nil, fmt.Errorf("mismatch between childIDs length (%d) and childAddr length (%d)",
-			len(childIDs), len(childAddr))
-	}
+func InjectFragmentMetaData(ctx context.Context, fragmentID uint64, queryID uint64, isRoot bool, childIDs []uint64, childAddr []string) context.Context {
 
 	childIDToAddr := make(map[uint64]string, len(childIDs))
 	for i, childID := range childIDs {
@@ -30,7 +25,7 @@ func InjectFragmentMetaData(ctx context.Context, fragmentID uint64, queryID uint
 		fragmentID:    fragmentID,
 		childIDToAddr: childIDToAddr,
 		isRoot:        isRoot,
-	}), nil
+	})
 }
 
 func ExtractFragmentMetaData(ctx context.Context) (isRoot bool, queryID uint64, fragmentID uint64, childAddrs map[uint64]string, ok bool) {

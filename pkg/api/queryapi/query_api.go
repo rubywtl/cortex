@@ -146,7 +146,7 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 		isRoot, queryID, fragmentID, _, _ := distributed_execution.ExtractFragmentMetaData(ctx)
 		if !isRoot {
 			key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
-			q.queryResultCache.InitWriting(*key)
+			q.queryResultCache.InitWriting(key)
 		}
 	}
 
@@ -198,7 +198,7 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 		isRoot, queryID, fragmentID, _, _ = distributed_execution.ExtractFragmentMetaData(ctx)
 		if !isRoot {
 			key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
-			q.queryResultCache.InitWriting(*key)
+			q.queryResultCache.InitWriting(key)
 		}
 	}
 
@@ -212,7 +212,7 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 			if q.distributedExecEnabled {
 				if !isRoot {
 					key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
-					q.queryResultCache.SetError(*key)
+					q.queryResultCache.SetError(key)
 				}
 			}
 			return apiFuncResult{nil, &apiError{errorInternal, fmt.Errorf("invalid logical plan: %v", err)}, nil, nil}
@@ -221,7 +221,7 @@ func (q *QueryAPI) InstantQueryHandler(r *http.Request) (result apiFuncResult) {
 		if err != nil {
 			if !isRoot {
 				key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
-				q.queryResultCache.SetError(*key)
+				q.queryResultCache.SetError(key)
 			}
 			return apiFuncResult{nil, &apiError{errorInternal, fmt.Errorf("failed to create instant query from logical plan: %v", err)}, nil, nil}
 		}
@@ -279,11 +279,7 @@ func (q *QueryAPI) Wrap(f apiFunc) http.HandlerFunc {
 				isRoot, queryID, fragmentID, _, _ := distributed_execution.ExtractFragmentMetaData(ctx)
 				key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
 
-				fragResult := distributed_execution.FragmentResult{
-					Data:       result.data,
-					Expiration: time.Now().Add(time.Hour),
-				}
-				q.queryResultCache.SetComplete(*key, fragResult)
+				q.queryResultCache.SetComplete(key, result.data)
 
 				if isRoot {
 					q.respond(w, r, result.data, result.warnings, r.FormValue("query"))

@@ -40,7 +40,7 @@ const testMaxOutstandingPerTenant = 5
 func setupScheduler(t *testing.T, reg prometheus.Registerer) (*Scheduler, schedulerpb.SchedulerForFrontendClient, schedulerpb.SchedulerForQuerierClient) {
 	cfg := Config{}
 	flagext.DefaultValues(&cfg)
-	s, err := NewScheduler(cfg, frontendv1.MockLimits{Queriers: 2, MockLimits: queue.MockLimits{MaxOutstanding: testMaxOutstandingPerTenant}}, log.NewNopLogger(), reg)
+	s, err := NewScheduler(cfg, frontendv1.MockLimits{Queriers: 2, MockLimits: queue.MockLimits{MaxOutstanding: testMaxOutstandingPerTenant}}, log.NewNopLogger(), reg, false)
 	require.NoError(t, err)
 
 	server := grpc.NewServer()
@@ -547,6 +547,8 @@ func TestQuerierLoopClient_WithLogicalPlan_Fragmented(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 
 	scheduler, frontendClient, querierClient := setupScheduler(t, reg)
+	scheduler.distributedExecEnabled = true
+
 	frontendLoop := initFrontendLoop(t, frontendClient, "frontend-12345")
 	querierLoop, err := querierClient.QuerierLoop(context.Background())
 	require.NoError(t, err)

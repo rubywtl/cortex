@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/cortexproject/cortex/pkg/engine/distributed_execution"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +17,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/thanos-io/promql-engine/logicalplan"
 	"github.com/weaveworks/common/httpgrpc"
 	"github.com/weaveworks/common/middleware"
 	"github.com/weaveworks/common/user"
@@ -25,6 +25,7 @@ import (
 
 	"github.com/cortexproject/cortex/pkg/frontend/v2/frontendv2pb"
 	//lint:ignore faillint scheduler needs to retrieve priority from the context
+	"github.com/cortexproject/cortex/pkg/engine/distributed_execution"
 	"github.com/cortexproject/cortex/pkg/querier/stats"
 	"github.com/cortexproject/cortex/pkg/scheduler/plan_fragments"
 	"github.com/cortexproject/cortex/pkg/scheduler/queue"
@@ -73,7 +74,8 @@ type Scheduler struct {
 	queueDuration            prometheus.Histogram
 
 	// Distributed sub-query mappings
-	fragmentTable *plan_fragments.FragmentTable
+	fragmentTable          *plan_fragments.FragmentTable
+	distributedExecEnabled bool
 }
 
 type RequestKey struct {
@@ -103,7 +105,7 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 }
 
 // NewScheduler creates a new Scheduler.
-func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer prometheus.Registerer) (*Scheduler, error) {
+func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer prometheus.Registerer, distributedExecEnabled bool) (*Scheduler, error) {
 	s := &Scheduler{
 		cfg:    cfg,
 		log:    log,
@@ -147,6 +149,8 @@ func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer promethe
 	if err != nil {
 		return nil, err
 	}
+
+	s.distributedExecEnabled = distributedExecEnabled
 
 	s.Service = services.NewBasicService(s.starting, s.running, s.stopping)
 	return s, nil
@@ -297,15 +301,15 @@ func (s *Scheduler) fragmentLogicalPlan(queryID uint64, req *httpgrpc.HTTPReques
 	if req.Body == nil {
 		return nil, nil
 	}
-
 	byteLP, err := s.getPlanFromHTTPRequest(req)
-	if err != nil {
+	if err != nil || len(byteLP) == 0 {
 		return nil, err
 	}
 
+	// distributed execution enabled <--> logical plan exists
 	lpNode, err := distributed_execution.Unmarshal(byteLP)
 	if err != nil {
-		return nil, nil // fmt.Errorf("failed to unmarshal logical plan: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal logical plan: %w", err)
 	}
 
 	fragments, err := plan_fragments.FragmentLogicalPlanNode(queryID, lpNode)
@@ -317,7 +321,7 @@ func (s *Scheduler) fragmentLogicalPlan(queryID uint64, req *httpgrpc.HTTPReques
 }
 
 func (s *Scheduler) updatePlanInHTTPRequest(fragment plan_fragments.Fragment) ([]byte, error) {
-	byteLP, err := distributed_execution.Marshal(fragment.Node)
+	byteLP, err := logicalplan.Marshal(fragment.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +371,9 @@ func (s *Scheduler) enqueueRequest(frontendContext context.Context, frontendAddr
 			queryID:         msg.QueryID,
 			request:         msg.HttpRequest,
 			statsEnabled:    msg.StatsEnabled,
-			fragment:        plan_fragments.Fragment{},
+			fragment: plan_fragments.Fragment{
+				IsRoot: true,
+			},
 		}
 
 		now := time.Now()
@@ -478,6 +484,7 @@ func (s *Scheduler) cancelRequestAndRemoveFromPending(frontendAddr string, query
 	if req != nil {
 		req.ctxCancel()
 	}
+	s.fragmentTable.ClearMappings(queryID)
 	delete(s.pendingRequests, key)
 }
 
@@ -562,8 +569,13 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 	errCh := make(chan error, 1)
 	go func() {
 		childAddrs := []string{}
+		var ok bool
 		if len(req.fragment.ChildIDs) != 0 {
-			childAddrs, _ = s.fragmentTable.GetMapping(req.queryID, req.fragment.ChildIDs)
+			childAddrs, ok = s.fragmentTable.GetMapping(req.queryID, req.fragment.ChildIDs)
+			if !ok { // if we don't have the child fragment address
+				//implement retry logic?
+				return
+			}
 		}
 		err := querier.Send(&schedulerpb.SchedulerToQuerier{
 			UserID:          req.userID,
@@ -577,7 +589,7 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 			IsRoot:          req.fragment.IsRoot,
 		})
 
-		if !req.fragment.IsEmpty() {
+		if s.distributedExecEnabled {
 			if req.fragment.IsRoot {
 				s.fragmentTable.ClearMappings(req.queryID)
 			} else {

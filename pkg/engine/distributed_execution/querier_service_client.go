@@ -17,28 +17,6 @@ import (
 	"time"
 )
 
-func CreateQuerierClient(grpcConfig grpcclient.Config, addr string) (client.PoolClient, error) {
-	opts, err := grpcConfig.DialOption([]grpc.UnaryClientInterceptor{
-		otgrpc.OpenTracingClientInterceptor(opentracing.GlobalTracer()),
-		middleware.ClientUserHeaderInterceptor,
-	}, nil)
-
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err := grpc.NewClient(addr, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &querierClient{
-		QuerierClient: querierpb.NewQuerierClient(conn),
-		HealthClient:  grpc_health_v1.NewHealthClient(conn),
-		conn:          conn,
-	}, nil
-}
-
 type querierClient struct {
 	querierpb.QuerierClient
 	grpc_health_v1.HealthClient

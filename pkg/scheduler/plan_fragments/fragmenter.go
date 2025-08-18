@@ -41,6 +41,7 @@ func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment,
 	newFragment := Fragment{}
 	fragments := []Fragment{}
 	nextChildrenIDs := []uint64{}
+
 	logicalplan.TraverseBottomUp(nil, &node, func(parent, current *logicalplan.Node) bool {
 		if parent == nil { // if we have reached the root
 			newFragment = Fragment{
@@ -64,10 +65,21 @@ func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment,
 
 			// append remote node information that will be used in the execution stage
 			key := distributed_execution.MakeFragmentKey(queryID, newFragment.FragmentID)
-			(*parent).(*distributed_execution.Remote).FragmentKey = *key
+			(*parent).(*distributed_execution.Remote).FragmentKey = key
 		}
 		return false
 	})
 
-	return fragments, nil
+	if fragments != nil {
+		return fragments, nil
+	} else {
+		// for non-query API calls
+		// --> treat as root fragment and immediately return the result
+		return []Fragment{{
+			Node:       node,
+			FragmentID: uint64(0),
+			ChildIDs:   []uint64{},
+			IsRoot:     true,
+		}}, nil
+	}
 }

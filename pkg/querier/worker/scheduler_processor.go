@@ -161,9 +161,10 @@ func (sp *schedulerProcessor) querierLoop(c schedulerpb.SchedulerForQuerier_Quer
 				level.Info(logger).Log("msg", "started running request")
 			}
 
-			ctx, err = distributed_execution.InjectFragmentMetaData(ctx, request.FragmentID, request.QueryID, request.IsRoot, request.ChildFragmentID, request.ChildAddr)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed to inject fragment meta data", "err", err)
+			if len(request.ChildAddr) != len(request.ChildFragmentID) {
+				level.Error(logger).Log("mismatch between childIDs length (%d) and childAddr length (%d)", len(request.ChildFragmentID), len(request.ChildAddr))
+			} else {
+				ctx = distributed_execution.InjectFragmentMetaData(ctx, request.FragmentID, request.QueryID, request.IsRoot, request.ChildFragmentID, request.ChildAddr)
 			}
 
 			// if this is a child fragment, then it doesn't matter

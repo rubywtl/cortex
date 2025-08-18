@@ -865,7 +865,7 @@ func (t *Cortex) initQueryScheduler() (services.Service, error) {
 		tenant.WithDefaultResolver(tenantfederation.NewRegexValidator())
 	}
 
-	s, err := scheduler.NewScheduler(t.Cfg.QueryScheduler, t.Overrides, util_log.Logger, prometheus.DefaultRegisterer)
+	s, err := scheduler.NewScheduler(t.Cfg.QueryScheduler, t.Overrides, util_log.Logger, prometheus.DefaultRegisterer, t.Cfg.Querier.DistributedExecEnabled)
 	if err != nil {
 		return nil, errors.Wrap(err, "query-scheduler init")
 	}

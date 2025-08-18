@@ -15,6 +15,8 @@ import (
 const (
 	BATCHSIZE      = 1000
 	WritingTimeout = 100 * time.Millisecond
+	MaxRetries     = 3
+	RetryDelay     = 100 * time.Millisecond
 )
 
 type QuerierServer struct {
@@ -31,16 +33,22 @@ func (s *QuerierServer) Series(req *querierpb.SeriesRequest, srv querierpb.Queri
 	key := MakeFragmentKey(req.QueryID, req.FragmentID)
 
 	for {
-		// TODO: maybe add a timeout thing here too
-		result, ok := s.queryResultCache.Get(*key)
-		if !ok {
-			return fmt.Errorf("fragment not found: %v", key)
+		var result FragmentResult
+		var ok bool
+		for attempt := 1; attempt <= MaxRetries; attempt++ {
+			result, ok = s.queryResultCache.Get(key)
+			if ok {
+				break
+			}
+			if attempt == MaxRetries {
+				return fmt.Errorf("fragment not found after %d attempts: %v", MaxRetries, key)
+			}
+			time.Sleep(RetryDelay)
 		}
 
 		switch result.Status {
 		case StatusDone:
-			fragmentResult := result.Data.(FragmentResult)
-			v1ResultData := fragmentResult.Data.(*v1.QueryData)
+			v1ResultData := result.Data.(*v1.QueryData)
 
 			switch v1ResultData.ResultType {
 			case parser.ValueTypeMatrix:
@@ -48,13 +56,15 @@ func (s *QuerierServer) Series(req *querierpb.SeriesRequest, srv querierpb.Queri
 
 				seriesBatch := []*querierpb.OneSeries{}
 				for _, s := range series {
-					oneSeries := querierpb.OneSeries{}
+					oneSeries := &querierpb.OneSeries{
+						Labels: make([]*querierpb.Label, len(s.Metric)),
+					}
 					for j, l := range s.Metric {
 						oneSeries.Labels[j] = &querierpb.Label{
 							Name:  l.Name,
 							Value: l.Value}
 					}
-					seriesBatch = append(seriesBatch, &oneSeries)
+					seriesBatch = append(seriesBatch, oneSeries)
 				}
 				if err := srv.Send(&querierpb.SeriesBatch{
 					OneSeries: seriesBatch}); err != nil {
@@ -68,14 +78,16 @@ func (s *QuerierServer) Series(req *querierpb.SeriesRequest, srv querierpb.Queri
 
 				seriesBatch := []*querierpb.OneSeries{}
 				for _, s := range samples {
-					oneSeries := querierpb.OneSeries{}
+					oneSeries := &querierpb.OneSeries{
+						Labels: make([]*querierpb.Label, len(s.Metric)),
+					}
 					for j, l := range s.Metric {
 						oneSeries.Labels[j] = &querierpb.Label{
 							Name:  l.Name,
 							Value: l.Value,
 						}
 					}
-					seriesBatch = append(seriesBatch, &oneSeries)
+					seriesBatch = append(seriesBatch, oneSeries)
 				}
 				if err := srv.Send(&querierpb.SeriesBatch{
 					OneSeries: seriesBatch,
@@ -104,15 +116,22 @@ func (s *QuerierServer) Next(req *querierpb.NextRequest, srv querierpb.Querier_N
 	}
 
 	for {
-		result, ok := s.queryResultCache.Get(*key)
-		if !ok {
-			return fmt.Errorf("fragment not found: %v", key)
+		result, ok := s.queryResultCache.Get(key)
+
+		for attempt := 1; attempt <= MaxRetries; attempt++ {
+			result, ok = s.queryResultCache.Get(key)
+			if ok {
+				break
+			}
+			if attempt == MaxRetries {
+				return fmt.Errorf("fragment not found after %d attempts: %v", MaxRetries, key)
+			}
+			time.Sleep(RetryDelay)
 		}
 
 		switch result.Status {
 		case StatusDone:
-			fragmentResult := result.Data.(FragmentResult)
-			v1ResultData := fragmentResult.Data.(*v1.QueryData)
+			v1ResultData := result.Data.(*v1.QueryData)
 
 			switch v1ResultData.ResultType {
 			case parser.ValueTypeMatrix:

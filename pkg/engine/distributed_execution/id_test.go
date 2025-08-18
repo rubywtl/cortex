@@ -2,65 +2,91 @@ package distributed_execution
 
 import (
 	"context"
-	"github.com/cortexproject/cortex/pkg/scheduler/plan_fragments"
-	"github.com/stretchr/testify/require"
+	"reflect"
 	"testing"
 )
 
-// This test makes sure that the metadata of the fragment can be successfully passed from the scheduler
-// to the querier and to be correctly extracted
-
 func TestFragmentMetadata(t *testing.T) {
-	t.Run("basic injection and extraction", func(t *testing.T) {
+	tests := []struct {
+		name      string
+		queryID   uint64
+		fragID    uint64
+		isRoot    bool
+		childIDs  []uint64
+		childAddr []string
+	}{
+		{
+			name:      "basic test",
+			queryID:   123,
+			fragID:    456,
+			isRoot:    true,
+			childIDs:  []uint64{1, 2, 3},
+			childAddr: []string{"addr1", "addr2", "addr3"},
+		},
+		{
+			name:      "empty children",
+			queryID:   789,
+			fragID:    101,
+			isRoot:    false,
+			childIDs:  []uint64{},
+			childAddr: []string{},
+		},
+		{
+			name:      "single child",
+			queryID:   999,
+			fragID:    888,
+			isRoot:    true,
+			childIDs:  []uint64{42},
+			childAddr: []string{"[IP_ADDRESS]:8080"},
+		},
+	}
 
-		ctx := context.Background()
-		fragment := plan_fragments.Fragment{
-			FragmentID: 123,
-			IsRoot:     true,
-		}
-		queryID := uint64(456)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// injection
+			ctx := context.Background()
+			newCtx := InjectFragmentMetaData(ctx, tt.fragID, tt.queryID, tt.isRoot, tt.childIDs, tt.childAddr)
 
-		ctx, err := InjectFragmentMetaData(ctx, fragment.FragmentID, queryID, fragment.IsRoot, fragment.ChildIDs)
+			// extraction
+			isRoot, queryID, fragmentID, childAddrs, ok := ExtractFragmentMetaData(newCtx)
 
-		isRoot, qID, fID, ok := ExtractFragmentMetaData(ctx)
-		require.True(t, ok)
-		require.True(t, isRoot)
-		require.Equal(t, queryID, qID)
-		require.Equal(t, fragment.FragmentID, fID)
-	})
+			// verify results
+			if !ok {
+				t.Error("ExtractFragmentMetaData failed, ok = false")
+			}
 
-	t.Run("extraction from empty context", func(t *testing.T) {
-		ctx := context.Background()
-		isRoot, queryID, fragmentID, ok := ExtractFragmentMetaData(ctx)
+			if isRoot != tt.isRoot {
+				t.Errorf("isRoot = %v, want %v", isRoot, tt.isRoot)
+			}
 
-		require.False(t, ok)
-		require.False(t, isRoot)
-		require.Equal(t, uint64(0), queryID)
-		require.Equal(t, uint64(0), fragmentID)
-	})
+			if queryID != tt.queryID {
+				t.Errorf("queryID = %v, want %v", queryID, tt.queryID)
+			}
 
-	t.Run("zero values", func(t *testing.T) {
-		ctx := context.Background()
-		fragment := plan_fragments.Fragment{}
-		ctx = InjectFragmentMetaData(ctx, fragment.FragmentID, 0, fragment.IsRoot, fragment.ChildIDs)
+			if fragmentID != tt.fragID {
+				t.Errorf("fragmentID = %v, want %v", fragmentID, tt.fragID)
+			}
 
-		isRoot, queryID, fragmentID, ok := ExtractFragmentMetaData(ctx)
-		require.True(t, ok)
-		require.False(t, isRoot)
-		require.Equal(t, uint64(0), queryID)
-		require.Equal(t, uint64(0), fragmentID)
-	})
+			// create expected childIDToAddr map
+			expectedChildAddrs := make(map[uint64]string)
+			for i, childID := range tt.childIDs {
+				expectedChildAddrs[childID] = tt.childAddr[i]
+			}
 
-	t.Run("type safety", func(t *testing.T) {
-		ctx := context.Background()
+			if !reflect.DeepEqual(childAddrs, expectedChildAddrs) {
+				t.Errorf("childAddrs = %v, want %v", childAddrs, expectedChildAddrs)
+			}
+		})
+	}
+}
 
-		ctx = context.WithValue(ctx, fragmentMetadataKey{}, "wrong type")
-
-		// should fail gracefully
-		isRoot, queryID, fragmentID, ok := ExtractFragmentMetaData(ctx)
-		require.False(t, ok)
-		require.False(t, isRoot)
-		require.Equal(t, uint64(0), queryID)
-		require.Equal(t, uint64(0), fragmentID)
-	})
+func TestExtractFragmentMetaDataWithEmptyContext(t *testing.T) {
+	ctx := context.Background()
+	isRoot, queryID, fragmentID, childAddrs, ok := ExtractFragmentMetaData(ctx)
+	if ok {
+		t.Error("ExtractFragmentMetaData should return ok=false for empty context")
+	}
+	if isRoot || queryID != 0 || fragmentID != 0 || childAddrs != nil {
+		t.Error("ExtractFragmentMetaData should return zero values for empty context")
+	}
 }
