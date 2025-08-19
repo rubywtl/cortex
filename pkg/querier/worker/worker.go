@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"flag"
+	"github.com/cortexproject/cortex/pkg/distributed_execution"
 	"os"
 	"sync"
 	"time"
@@ -91,7 +92,8 @@ type querierWorker struct {
 	managers map[string]*processorManager
 }
 
-func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer) (services.Service, error) {
+func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer, querierAddr string,
+	distributedExecEnabled bool, queryResultCache *distributed_execution.QueryResultCache) (services.Service, error) {
 	if cfg.QuerierID == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
@@ -109,7 +111,7 @@ func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg pr
 		level.Info(log).Log("msg", "Starting querier worker connected to query-scheduler", "scheduler", cfg.SchedulerAddress)
 
 		address = cfg.SchedulerAddress
-		processor, servs = newSchedulerProcessor(cfg, handler, log, reg)
+		processor, servs = newSchedulerProcessor(cfg, handler, log, reg, querierAddr)
 
 	case cfg.FrontendAddress != "":
 		level.Info(log).Log("msg", "Starting querier worker connected to query-frontend", "frontend", cfg.FrontendAddress)

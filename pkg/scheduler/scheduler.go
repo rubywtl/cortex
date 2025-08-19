@@ -3,8 +3,10 @@ package scheduler
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/thanos-io/promql-engine/logicalplan"
 	"github.com/weaveworks/common/httpgrpc"
 	"github.com/weaveworks/common/middleware"
 	"github.com/weaveworks/common/user"
@@ -22,7 +25,9 @@ import (
 
 	"github.com/cortexproject/cortex/pkg/frontend/v2/frontendv2pb"
 	//lint:ignore faillint scheduler needs to retrieve priority from the context
+	"github.com/cortexproject/cortex/pkg/distributed_execution"
 	"github.com/cortexproject/cortex/pkg/querier/stats"
+	"github.com/cortexproject/cortex/pkg/scheduler/fragment_table"
 	"github.com/cortexproject/cortex/pkg/scheduler/queue"
 	"github.com/cortexproject/cortex/pkg/scheduler/schedulerpb"
 	"github.com/cortexproject/cortex/pkg/tenant"
@@ -37,6 +42,11 @@ import (
 
 var (
 	errSchedulerIsNotRunning = errors.New("scheduler is not running")
+)
+
+const (
+	maxRetries = 3
+	retryDelay = 100 * time.Millisecond
 )
 
 // Scheduler is responsible for queueing and dispatching queries to Queriers.
@@ -55,7 +65,7 @@ type Scheduler struct {
 	activeUsers  *util.ActiveUsersCleanupService
 
 	pendingRequestsMu sync.Mutex
-	pendingRequests   map[requestKey]*schedulerRequest // Request is kept in this map even after being dispatched to querier. It can still be canceled at that time.
+	pendingRequests   map[RequestKey]*schedulerRequest // Request is kept in this map even after being dispatched to querier. It can still be canceled at that time.
 
 	// Subservices manager.
 	subservices        *services.Manager
@@ -67,11 +77,16 @@ type Scheduler struct {
 	connectedQuerierClients  prometheus.GaugeFunc
 	connectedFrontendClients prometheus.GaugeFunc
 	queueDuration            prometheus.Histogram
+
+	// Distributed sub-query mappings
+	fragmentTable          *fragment_table.FragmentTable
+	distributedExecEnabled bool
 }
 
-type requestKey struct {
+type RequestKey struct {
 	frontendAddr string
 	queryID      uint64
+	fragmentID   uint64
 }
 
 type connectedFrontend struct {
@@ -95,14 +110,15 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 }
 
 // NewScheduler creates a new Scheduler.
-func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer prometheus.Registerer) (*Scheduler, error) {
+func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer prometheus.Registerer, distributedExecEnabled bool) (*Scheduler, error) {
 	s := &Scheduler{
 		cfg:    cfg,
 		log:    log,
 		limits: limits,
 
-		pendingRequests:    map[requestKey]*schedulerRequest{},
+		pendingRequests:    map[RequestKey]*schedulerRequest{},
 		connectedFrontends: map[string]*connectedFrontend{},
+		fragmentTable:      fragment_table.NewFragmentTable(2 * time.Minute),
 	}
 
 	s.queueLength = promauto.With(registerer).NewGaugeVec(prometheus.GaugeOpts{
@@ -139,6 +155,8 @@ func NewScheduler(cfg Config, limits Limits, log log.Logger, registerer promethe
 		return nil, err
 	}
 
+	s.distributedExecEnabled = distributedExecEnabled
+
 	s.Service = services.NewBasicService(s.starting, s.running, s.stopping)
 	return s, nil
 }
@@ -166,6 +184,8 @@ type schedulerRequest struct {
 
 	// This is only used for testing.
 	parentSpanContext opentracing.SpanContext
+
+	fragment distributed_execution.Fragment
 }
 
 func (s schedulerRequest) Priority() int64 {
@@ -223,7 +243,8 @@ func (s *Scheduler) FrontendLoop(frontend schedulerpb.SchedulerForFrontend_Front
 			}
 
 		case schedulerpb.CANCEL:
-			s.cancelRequestAndRemoveFromPending(frontendAddress, msg.QueryID)
+			// TODO: potential problem... need to move fragmentation step up here maybe
+			s.cancelRequestAndRemoveFromPending(frontendAddress, msg.QueryID, distributed_execution.Fragment{})
 			resp = &schedulerpb.SchedulerToFrontend{Status: schedulerpb.OK}
 
 		default:
@@ -279,68 +300,202 @@ func (s *Scheduler) frontendDisconnected(frontendAddress string) {
 	}
 }
 
-func (s *Scheduler) enqueueRequest(frontendContext context.Context, frontendAddr string, msg *schedulerpb.FrontendToScheduler) error {
-	// Create new context for this request, to support cancellation.
-	ctx, cancel := context.WithCancel(frontendContext)
-	shouldCancel := true
-	defer func() {
-		if shouldCancel {
-			cancel()
-		}
-	}()
-
-	// Extract tracing information from headers in HTTP request. FrontendContext doesn't have the correct tracing
-	// information, since that is a long-running request.
-	tracer := opentracing.GlobalTracer()
-	parentSpanContext, err := httpgrpcutil.GetParentSpanForRequest(tracer, msg.HttpRequest)
-	if err != nil {
-		return err
+// fragmentLogicalPlan plan_fragments logical plan if it exist and can be un-marshaled
+// otherwise, it returns an empty fragment array
+func (s *Scheduler) fragmentLogicalPlan(queryID uint64, req *httpgrpc.HTTPRequest) ([]distributed_execution.Fragment, error) {
+	if req.Body == nil {
+		return nil, nil
+	}
+	byteLP, err := s.getPlanFromHTTPRequest(req)
+	if err != nil || len(byteLP) == 0 {
+		return nil, err
 	}
 
+	// distributed execution enabled <--> logical plan exists
+	lpNode, err := distributed_execution.Unmarshal(byteLP)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal logical plan: %w", err)
+	}
+
+	fragments, err := distributed_execution.FragmentLogicalPlanNode(queryID, lpNode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fragment logical plan: %w", err)
+	}
+
+	return fragments, nil
+}
+
+func (s *Scheduler) updatePlanInHTTPRequest(fragment distributed_execution.Fragment) ([]byte, error) {
+	byteLP, err := logicalplan.Marshal(fragment.Node)
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{}
+	form.Add("plan", string(byteLP))
+	return []byte(form.Encode()), nil
+}
+
+func (s *Scheduler) getPlanFromHTTPRequest(req *httpgrpc.HTTPRequest) ([]byte, error) {
+	values, err := url.ParseQuery(string(req.Body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse serialized logical plan: %w", err)
+	}
+	plan := values.Get("plan")
+	return []byte(plan), nil
+}
+
+func (s *Scheduler) enqueueRequest(frontendContext context.Context, frontendAddr string, msg *schedulerpb.FrontendToScheduler) error {
 	userID := msg.GetUserID()
 
-	req := &schedulerRequest{
-		frontendAddress: frontendAddr,
-		userID:          msg.UserID,
-		queryID:         msg.QueryID,
-		request:         msg.HttpRequest,
-		statsEnabled:    msg.StatsEnabled,
-	}
-
-	now := time.Now()
-
-	req.parentSpanContext = parentSpanContext
-	req.queueSpan, req.ctx = opentracing.StartSpanFromContextWithTracer(ctx, tracer, "queued", opentracing.ChildOf(parentSpanContext))
-	req.enqueueTime = now
-	req.ctxCancel = cancel
-
-	// aggregate the max queriers limit in the case of a multi tenant query
-	tenantIDs, err := tenant.TenantIDsFromOrgID(userID)
+	fragments, err := s.fragmentLogicalPlan(msg.QueryID, msg.HttpRequest)
 	if err != nil {
 		return err
 	}
-	maxQueriers := validation.SmallestPositiveNonZeroFloat64PerTenant(tenantIDs, s.limits.MaxQueriersPerUser)
+	if fragments == nil {
 
-	s.activeUsers.UpdateUserTimestamp(userID, now)
-	return s.requestQueue.EnqueueRequest(userID, req, maxQueriers, func() {
-		shouldCancel = false
+		// Create new context for this request, to support cancellation.
+		ctx, cancel := context.WithCancel(frontendContext)
+		shouldCancel := true
+		defer func() {
+			if shouldCancel {
+				cancel()
+			}
+		}()
 
-		s.pendingRequestsMu.Lock()
-		defer s.pendingRequestsMu.Unlock()
-		s.pendingRequests[requestKey{frontendAddr: frontendAddr, queryID: msg.QueryID}] = req
-	})
+		// Extract tracing information from headers in HTTP request. FrontendContext doesn't have the correct tracing
+		// information, since that is a long-running request.
+		tracer := opentracing.GlobalTracer()
+		parentSpanContext, err := httpgrpcutil.GetParentSpanForRequest(tracer, msg.HttpRequest)
+		if err != nil {
+			return err
+		}
+
+		req := &schedulerRequest{
+			frontendAddress: frontendAddr,
+			userID:          msg.UserID,
+			queryID:         msg.QueryID,
+			request:         msg.HttpRequest,
+			statsEnabled:    msg.StatsEnabled,
+			fragment: distributed_execution.Fragment{
+				IsRoot: true,
+			},
+		}
+
+		now := time.Now()
+
+		req.parentSpanContext = parentSpanContext
+		req.queueSpan, req.ctx = opentracing.StartSpanFromContextWithTracer(ctx, tracer, "queued", opentracing.ChildOf(parentSpanContext))
+		req.enqueueTime = now
+		req.ctxCancel = cancel
+
+		// aggregate the max queriers limit in the case of a multi tenant query
+		tenantIDs, err := tenant.TenantIDsFromOrgID(userID)
+		if err != nil {
+			return err
+		}
+		maxQueriers := validation.SmallestPositiveNonZeroFloat64PerTenant(tenantIDs, s.limits.MaxQueriersPerUser)
+
+		s.activeUsers.UpdateUserTimestamp(userID, now)
+		return s.requestQueue.EnqueueRequest(userID, req, maxQueriers, func() {
+			shouldCancel = false
+
+			s.pendingRequestsMu.Lock()
+			defer s.pendingRequestsMu.Unlock()
+			s.pendingRequests[RequestKey{frontendAddr: frontendAddr, queryID: msg.QueryID, fragmentID: 0}] = req
+		})
+
+	} else { // when there are plan_fragments
+		for _, fragment := range fragments {
+
+			frag := fragment
+
+			if err := func() error {
+				// create new context and cancel func per fragment
+				ctx, cancel := context.WithCancel(frontendContext)
+				shouldCancel := true
+				defer func() {
+					if shouldCancel {
+						cancel()
+					}
+				}()
+
+				// extract tracing info
+				tracer := opentracing.GlobalTracer()
+				parentSpanContext, err := httpgrpcutil.GetParentSpanForRequest(tracer, msg.HttpRequest)
+				if err != nil {
+					return err
+				}
+
+				// modify request with fragment info
+				newBody, err := s.updatePlanInHTTPRequest(frag)
+				msg.HttpRequest = &httpgrpc.HTTPRequest{
+					Method:  msg.HttpRequest.Method,
+					Url:     msg.HttpRequest.Url,
+					Headers: msg.HttpRequest.Headers,
+					Body:    newBody,
+				}
+				if err != nil {
+					return err
+				}
+
+				req := &schedulerRequest{
+					frontendAddress: frontendAddr,
+					userID:          msg.UserID,
+					queryID:         msg.QueryID,
+					request:         msg.HttpRequest,
+					statsEnabled:    msg.StatsEnabled,
+					fragment:        frag,
+				}
+
+				now := time.Now()
+				req.parentSpanContext = parentSpanContext
+				req.queueSpan, req.ctx = opentracing.StartSpanFromContextWithTracer(ctx, tracer, "queued", opentracing.ChildOf(parentSpanContext))
+				req.enqueueTime = now
+				req.ctxCancel = cancel
+
+				tenantIDs, err := tenant.TenantIDsFromOrgID(userID)
+				if err != nil {
+					return err
+				}
+				maxQueriers := validation.SmallestPositiveNonZeroFloat64PerTenant(tenantIDs, s.limits.MaxQueriersPerUser)
+
+				s.activeUsers.UpdateUserTimestamp(userID, now)
+
+				err = s.requestQueue.EnqueueRequest(userID, req, maxQueriers, func() {
+					shouldCancel = false
+					s.pendingRequestsMu.Lock()
+					defer s.pendingRequestsMu.Unlock()
+					s.pendingRequests[RequestKey{
+						frontendAddr: frontendAddr,
+						queryID:      msg.QueryID,
+						fragmentID:   req.fragment.FragmentID,
+					}] = req
+				})
+
+				if err != nil {
+					return err
+				}
+
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // This method doesn't do removal from the queue.
-func (s *Scheduler) cancelRequestAndRemoveFromPending(frontendAddr string, queryID uint64) {
+func (s *Scheduler) cancelRequestAndRemoveFromPending(frontendAddr string, queryID uint64, fragment distributed_execution.Fragment) {
 	s.pendingRequestsMu.Lock()
 	defer s.pendingRequestsMu.Unlock()
 
-	key := requestKey{frontendAddr: frontendAddr, queryID: queryID}
+	key := RequestKey{frontendAddr: frontendAddr, queryID: queryID, fragmentID: fragment.FragmentID}
 	req := s.pendingRequests[key]
 	if req != nil {
 		req.ctxCancel()
 	}
+	// s.fragmentTable.ClearMappings(queryID)
 	delete(s.pendingRequests, key)
 }
 
@@ -352,6 +507,7 @@ func (s *Scheduler) QuerierLoop(querier schedulerpb.SchedulerForQuerier_QuerierL
 	}
 
 	querierID := resp.GetQuerierID()
+	querierAddress := resp.GetQuerierAddress()
 
 	s.requestQueue.RegisterQuerierConnection(querierID)
 	defer s.requestQueue.UnregisterQuerierConnection(querierID)
@@ -391,20 +547,41 @@ func (s *Scheduler) QuerierLoop(querier schedulerpb.SchedulerForQuerier_QuerierL
 		  it's possible that it's own queue would perpetually contain only expired requests.
 		*/
 
-		if r.ctx.Err() != nil {
+		err = r.ctx.Err()
+		if err != nil {
 			// Remove from pending requests.
-			s.cancelRequestAndRemoveFromPending(r.frontendAddress, r.queryID)
+			s.cancelRequestAndRemoveFromPending(r.frontendAddress, r.queryID, r.fragment)
 
 			lastUserIndex = lastUserIndex.ReuseLastUser()
 			continue
 		}
 
-		if err := s.forwardRequestToQuerier(querier, r); err != nil {
+		if r.fragment.IsRoot {
+			ok := s.waitForChildToBeReady(r.queryID, r.fragment.ChildIDs)
+			if ok != true {
+				return fmt.Errorf("failed to get child address mappings after %d attempts for queryID: %d", maxRetries, r.queryID)
+			}
+		}
+
+		if err := s.forwardRequestToQuerier(querier, r, querierAddress); err != nil {
 			return err
 		}
 	}
-
 	return errSchedulerIsNotRunning
+}
+
+func (s *Scheduler) waitForChildToBeReady(queryID uint64, childIDs []uint64) bool {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		_, ok := s.fragmentTable.GetAllChildAddresses(queryID, childIDs)
+		if ok {
+			return true
+		}
+		if attempt == maxRetries {
+			return false
+		}
+		time.Sleep(retryDelay)
+	}
+	return false
 }
 
 func (s *Scheduler) NotifyQuerierShutdown(_ context.Context, req *schedulerpb.NotifyQuerierShutdownRequest) (*schedulerpb.NotifyQuerierShutdownResponse, error) {
@@ -414,26 +591,39 @@ func (s *Scheduler) NotifyQuerierShutdown(_ context.Context, req *schedulerpb.No
 	return &schedulerpb.NotifyQuerierShutdownResponse{}, nil
 }
 
-func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuerier_QuerierLoopServer, req *schedulerRequest) error {
+func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuerier_QuerierLoopServer, req *schedulerRequest, querierAddress string) error {
 	// Make sure to cancel request at the end to cleanup resources.
-	defer s.cancelRequestAndRemoveFromPending(req.frontendAddress, req.queryID)
+	defer s.cancelRequestAndRemoveFromPending(req.frontendAddress, req.queryID, req.fragment)
 
 	// Handle the stream sending & receiving on a goroutine so we can
 	// monitoring the contexts in a select and cancel things appropriately.
 	errCh := make(chan error, 1)
 	go func() {
+		childAddrs := []string{}
+		if len(req.fragment.ChildIDs) != 0 {
+			childAddrs, _ = s.fragmentTable.GetAllChildAddresses(req.queryID, req.fragment.ChildIDs)
+		}
+
 		err := querier.Send(&schedulerpb.SchedulerToQuerier{
 			UserID:          req.userID,
 			QueryID:         req.queryID,
 			FrontendAddress: req.frontendAddress,
 			HttpRequest:     req.request,
 			StatsEnabled:    req.statsEnabled,
+			FragmentID:      req.fragment.FragmentID,
+			ChildFragmentID: req.fragment.ChildIDs,
+			ChildAddr:       childAddrs,
+			IsRoot:          req.fragment.IsRoot,
 		})
+
+		if s.distributedExecEnabled {
+			s.fragmentTable.AddMapping(req.queryID, req.fragment.FragmentID, querierAddress)
+		}
+
 		if err != nil {
 			errCh <- err
 			return
 		}
-
 		_, err = querier.Recv()
 		errCh <- err
 	}()

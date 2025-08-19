@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"github.com/cortexproject/cortex/pkg/distributed_execution"
 	"net/http"
 	"time"
 
@@ -31,7 +32,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/util/services"
 )
 
-func newSchedulerProcessor(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer) (*schedulerProcessor, []services.Service) {
+func newSchedulerProcessor(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer, querierAddress string) (*schedulerProcessor, []services.Service) {
 	p := &schedulerProcessor{
 		log:            log,
 		handler:        handler,
@@ -47,6 +48,7 @@ func newSchedulerProcessor(cfg Config, handler RequestHandler, log log.Logger, r
 			Help:    "Time spend doing requests to frontend.",
 			Buckets: prometheus.ExponentialBuckets(0.001, 4, 6),
 		}, []string{"operation", "status_code"}),
+		querierAddress: querierAddress, // the current querier's address
 	}
 
 	frontendClientsGauge := promauto.With(reg).NewGauge(prometheus.GaugeOpts{
@@ -71,8 +73,10 @@ type schedulerProcessor struct {
 	grpcConfig     grpcclient.Config
 	maxMessageSize int
 	querierID      string
+	querierAddress string
 
 	frontendPool                  *client.Pool
+	querierPool                   *client.Pool
 	frontendClientRequestDuration *prometheus.HistogramVec
 
 	targetHeaders          []string
@@ -97,7 +101,7 @@ func (sp *schedulerProcessor) processQueriesOnSingleStream(ctx context.Context, 
 	for backoff.Ongoing() {
 		c, err := schedulerClient.QuerierLoop(ctx)
 		if err == nil {
-			err = c.Send(&schedulerpb.QuerierToScheduler{QuerierID: sp.querierID})
+			err = c.Send(&schedulerpb.QuerierToScheduler{QuerierID: sp.querierID, QuerierAddress: sp.querierAddress})
 		}
 
 		if err != nil {
@@ -156,7 +160,14 @@ func (sp *schedulerProcessor) querierLoop(c schedulerpb.SchedulerForQuerier_Quer
 			if request.StatsEnabled {
 				level.Info(logger).Log("msg", "started running request")
 			}
-			sp.runRequest(ctx, logger, request.QueryID, request.FrontendAddress, request.StatsEnabled, request.HttpRequest)
+
+			if len(request.ChildAddr) != len(request.ChildFragmentID) {
+				level.Error(logger).Log("mismatch between childIDs length (%d) and childAddr length (%d)", len(request.ChildFragmentID), len(request.ChildAddr))
+			} else {
+				ctx = distributed_execution.InjectFragmentMetaData(ctx, request.FragmentID, request.QueryID, request.IsRoot, request.ChildFragmentID, request.ChildAddr)
+			}
+
+			sp.runRequest(ctx, logger, request.QueryID, request.FrontendAddress, request.StatsEnabled, request.HttpRequest, request.IsRoot)
 
 			if err = ctx.Err(); err != nil {
 				return
@@ -170,13 +181,13 @@ func (sp *schedulerProcessor) querierLoop(c schedulerpb.SchedulerForQuerier_Quer
 	}
 }
 
-func (sp *schedulerProcessor) runRequest(ctx context.Context, logger log.Logger, queryID uint64, frontendAddress string, statsEnabled bool, request *httpgrpc.HTTPRequest) {
+func (sp *schedulerProcessor) runRequest(ctx context.Context, logger log.Logger, queryID uint64, frontendAddress string, statsEnabled bool, request *httpgrpc.HTTPRequest, isRoot bool) {
 	var stats *querier_stats.QueryStats
 	if statsEnabled {
 		stats, ctx = querier_stats.ContextWithEmptyStats(ctx)
 	}
 
-	response, err := sp.handler.Handle(ctx, request)
+	response, err := sp.handler.Handle(ctx, request) // inject isRoot to ctx then use r.Context().value()
 	if err != nil {
 		var ok bool
 		response, ok = httpgrpc.HTTPResponseFromError(err)
@@ -187,6 +198,10 @@ func (sp *schedulerProcessor) runRequest(ctx context.Context, logger log.Logger,
 			}
 		}
 	}
+	if !isRoot {
+		return
+	}
+
 	if statsEnabled {
 		level.Info(logger).Log("msg", "finished request", "status_code", response.Code, "response_size", len(response.GetBody()))
 	}
@@ -205,7 +220,6 @@ func (sp *schedulerProcessor) runRequest(ctx context.Context, logger log.Logger,
 			Body: []byte(errMsg),
 		}
 	}
-
 	c, err := sp.frontendPool.GetClientFor(frontendAddress)
 	if err == nil {
 		// To prevent querier panic, the panic could happen when the go-routines not-exited
