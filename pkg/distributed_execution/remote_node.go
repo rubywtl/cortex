@@ -1,0 +1,334 @@
+package distributed_execution
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/cortexproject/cortex/pkg/distributed_execution/querierpb"
+	"io"
+
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/prometheus/prometheus/storage"
+	"github.com/thanos-io/promql-engine/execution/exchange"
+	"github.com/thanos-io/promql-engine/execution/model"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
+
+	"github.com/cortexproject/cortex/pkg/ring/client"
+)
+
+type NodeType = logicalplan.NodeType
+type Node = logicalplan.Node
+
+const (
+	RemoteNode = "RemoteNode"
+)
+
+// (to verify interface implementations)
+var _ logicalplan.Node = (*Remote)(nil)
+var _ logicalplan.UserDefinedExpr = (*Remote)(nil)
+
+type Remote struct {
+	Op   parser.ItemType
+	Expr Node `json:"-"`
+
+	FragmentKey  FragmentKey
+	FragmentAddr string
+}
+
+func NewRemoteNode() Node {
+	return &Remote{
+		// initialize the fragment key pointer first
+		FragmentKey: FragmentKey{},
+	}
+}
+func (r *Remote) Clone() Node {
+	return &Remote{Op: r.Op, Expr: r.Expr.Clone(), FragmentKey: r.FragmentKey}
+}
+func (r *Remote) Children() []*Node {
+	return []*Node{&r.Expr}
+}
+func (r *Remote) String() string {
+	return fmt.Sprintf("%s%s", r.Op.String(), r.Expr.String())
+}
+func (r *Remote) ReturnType() parser.ValueType {
+	return r.Expr.ReturnType()
+}
+func (r *Remote) Type() NodeType { return RemoteNode }
+
+type remote struct {
+	QueryID      uint64
+	FragmentID   uint64
+	FragmentAddr string
+}
+
+func (r *Remote) MarshalJSON() ([]byte, error) {
+	return json.Marshal(remote{
+		QueryID:      r.FragmentKey.queryID,
+		FragmentID:   r.FragmentKey.fragmentID,
+		FragmentAddr: r.FragmentAddr,
+	})
+}
+
+func (r *Remote) UnmarshalJSON(data []byte) error {
+	re := remote{}
+	if err := json.Unmarshal(data, &re); err != nil {
+		return err
+	}
+
+	r.FragmentKey = MakeFragmentKey(re.QueryID, re.FragmentID)
+	r.FragmentAddr = re.FragmentAddr
+	return nil
+}
+
+type poolKey struct{}
+
+// TODO: change to using an extra layer to put the querier address in it
+func ContextWithPool(ctx context.Context, pool *client.Pool) context.Context {
+	return context.WithValue(ctx, poolKey{}, pool)
+}
+
+func PoolFromContext(ctx context.Context) *client.Pool {
+	if pool, ok := ctx.Value(poolKey{}).(*client.Pool); ok {
+		return pool
+	}
+	return nil
+}
+
+func (p *Remote) MakeExecutionOperator(
+	ctx context.Context,
+	vectors *model.VectorPool,
+	opts *query.Options,
+	hints storage.SelectHints,
+) (model.VectorOperator, error) {
+	pool := PoolFromContext(ctx)
+	if pool == nil {
+		return nil, fmt.Errorf("client pool not found in context")
+	}
+
+	remoteExec, err := newDistributedRemoteExecution(ctx, pool, p.FragmentKey, opts)
+	if err != nil {
+		return nil, err
+	}
+	return exchange.NewConcurrent(remoteExec, 2, opts), nil
+}
+
+type DistributedRemoteExecution struct {
+	client querierpb.QuerierClient
+
+	mint        int64
+	maxt        int64
+	step        int64
+	currentStep int64
+	numSteps    int
+
+	stream      querierpb.Querier_NextClient
+	buffer      []model.StepVector
+	bufferIndex int
+
+	batchSize   int64
+	series      []labels.Labels
+	fragmentKey FragmentKey
+	addr        string
+	initialized bool // Track if stream is initialized
+}
+
+type QuerierAddrKey struct{}
+
+func newDistributedRemoteExecution(ctx context.Context, pool *client.Pool, fragmentKey FragmentKey, queryOpts *query.Options) (*DistributedRemoteExecution, error) {
+
+	_, _, _, childIDToAddr, _ := ExtractFragmentMetaData(ctx)
+
+	poolClient, err := pool.GetClientFor(childIDToAddr[fragmentKey.fragmentID])
+
+	if err != nil {
+		return nil, err
+	}
+
+	client, ok := poolClient.(*querierClient)
+	if !ok {
+		return nil, fmt.Errorf("invalid client type from pool")
+	}
+
+	d := &DistributedRemoteExecution{
+		client: client,
+
+		mint:        queryOpts.Start.UnixMilli(),
+		maxt:        queryOpts.End.UnixMilli(),
+		step:        queryOpts.Step.Milliseconds(),
+		currentStep: queryOpts.Start.UnixMilli(),
+		numSteps:    queryOpts.NumSteps(),
+
+		batchSize:   1000,
+		fragmentKey: fragmentKey,
+		addr:        childIDToAddr[fragmentKey.fragmentID],
+		buffer:      nil,
+		bufferIndex: 0,
+		initialized: false,
+	}
+
+	if d.step == 0 {
+		d.step = 1
+	}
+
+	return d, nil
+}
+
+func (d *DistributedRemoteExecution) Series(ctx context.Context) ([]labels.Labels, error) {
+
+	if d.series != nil {
+		return d.series, nil
+	}
+
+	req := &querierpb.SeriesRequest{
+		QueryID:    d.fragmentKey.queryID,
+		FragmentID: d.fragmentKey.fragmentID,
+		Batchsize:  d.batchSize,
+	}
+
+	stream, err := d.client.Series(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var series []labels.Labels
+
+	for {
+		seriesBatch, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		for _, s := range seriesBatch.OneSeries {
+			oneSeries := make(map[string]string, len(s.Labels))
+			for _, l := range s.Labels {
+				oneSeries[l.Name] = l.Value
+			}
+			series = append(series, labels.FromMap(oneSeries))
+		}
+	}
+
+	d.series = series
+	return series, nil
+}
+
+func (d *DistributedRemoteExecution) Next(ctx context.Context) ([]model.StepVector, error) {
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if d.currentStep > d.maxt {
+		return nil, nil
+	}
+
+	ts := d.currentStep
+	numVectorsNeeded := 0
+	for currStep := 0; currStep < d.numSteps && ts <= d.maxt; currStep++ {
+		numVectorsNeeded++
+		ts += d.step
+	}
+
+	// return from buffer first
+	if d.buffer != nil && d.bufferIndex < len(d.buffer) {
+		end := d.bufferIndex + int(d.batchSize)
+		if end > len(d.buffer) {
+			end = len(d.buffer)
+		}
+		result := d.buffer[d.bufferIndex:end]
+		d.bufferIndex = end
+
+		if d.bufferIndex >= len(d.buffer) {
+			d.buffer = nil
+			d.bufferIndex = 0
+		}
+
+		return result, nil
+	}
+
+	// initialize stream if haven't
+	if !d.initialized {
+		req := &querierpb.NextRequest{
+			QueryID:    d.fragmentKey.queryID,
+			FragmentID: d.fragmentKey.fragmentID,
+			Batchsize:  d.batchSize,
+		}
+		stream, err := d.client.Next(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize stream: %w", err)
+		}
+		d.stream = stream
+		d.initialized = true
+	}
+
+	// get new batch from server
+	batch, err := d.stream.Recv()
+	if err == io.EOF {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error receiving from stream: %w", err)
+	}
+
+	// return new batch and save it
+	d.buffer = make([]model.StepVector, len(batch.StepVectors))
+	for i, sv := range batch.StepVectors {
+		d.buffer[i] = model.StepVector{
+			T:            sv.T,
+			SampleIDs:    sv.Sample_IDs,
+			Samples:      sv.Samples,
+			HistogramIDs: sv.Histogram_IDs,
+			Histograms:   FloatHistogramProtoToFloatHistograms(sv.Histograms),
+		}
+	}
+
+	end := int(d.batchSize)
+	if end > len(d.buffer) {
+		end = len(d.buffer)
+	}
+	result := d.buffer[:end]
+	d.bufferIndex = end
+
+	if d.bufferIndex >= len(d.buffer) {
+		d.buffer = nil
+		d.bufferIndex = 0
+	}
+
+	d.currentStep += d.step * int64(len(result))
+
+	return result, nil
+}
+
+func (d *DistributedRemoteExecution) Close() error {
+	if d.stream != nil {
+
+		if err := d.stream.CloseSend(); err != nil {
+			return fmt.Errorf("error closing stream: %w", err)
+		}
+	}
+	d.buffer = nil
+	d.bufferIndex = 0
+	d.initialized = false
+	return nil
+}
+
+func (d DistributedRemoteExecution) GetPool() *model.VectorPool {
+	//TODO
+	return &model.VectorPool{}
+}
+
+func (d DistributedRemoteExecution) Explain() (next []model.VectorOperator) {
+	//TODO
+	return []model.VectorOperator{}
+}
+
+func (d DistributedRemoteExecution) String() string {
+	//TODO implement
+	return "distributed remote execution"
+}

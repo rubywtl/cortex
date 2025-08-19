@@ -3,8 +3,10 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"github.com/cortexproject/cortex/pkg/querier/tripperware"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +16,10 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/promql-engine/logicalplan"
+	"github.com/thanos-io/promql-engine/query"
 	"github.com/uber/jaeger-client-go/config"
 	"github.com/weaveworks/common/httpgrpc"
 	"google.golang.org/grpc"
@@ -35,7 +40,7 @@ const testMaxOutstandingPerTenant = 5
 func setupScheduler(t *testing.T, reg prometheus.Registerer) (*Scheduler, schedulerpb.SchedulerForFrontendClient, schedulerpb.SchedulerForQuerierClient) {
 	cfg := Config{}
 	flagext.DefaultValues(&cfg)
-	s, err := NewScheduler(cfg, frontendv1.MockLimits{Queriers: 2, MockLimits: queue.MockLimits{MaxOutstanding: testMaxOutstandingPerTenant}}, log.NewNopLogger(), reg)
+	s, err := NewScheduler(cfg, frontendv1.MockLimits{Queriers: 2, MockLimits: queue.MockLimits{MaxOutstanding: testMaxOutstandingPerTenant}}, log.NewNopLogger(), reg, false)
 	require.NoError(t, err)
 
 	server := grpc.NewServer()
@@ -448,6 +453,210 @@ func TestSchedulerMetrics(t *testing.T) {
 	`), "cortex_query_scheduler_queue_length", "cortex_request_queue_requests_total"))
 }
 
+// TestQuerierLoopClient_WithLogicalPlan tests to see if the scheduler enqueues the fragment
+// with the expected QueryID, logical plan, and other fragment meta-data
+func TestQuerierLoopClient_WithLogicalPlan(t *testing.T) {
+	reg := prometheus.NewPedanticRegistry()
+
+	scheduler, frontendClient, querierClient := setupScheduler(t, reg)
+	frontendLoop := initFrontendLoop(t, frontendClient, "frontend-12345")
+	querierLoop, err := querierClient.QuerierLoop(context.Background())
+	require.NoError(t, err)
+
+	// CASE 1: request with corrupted logical plan --> expect to fail at un-marshal stage
+	require.NoError(t, frontendLoop.Send(&schedulerpb.FrontendToScheduler{
+		Type:        schedulerpb.ENQUEUE,
+		QueryID:     1,
+		UserID:      "test",
+		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: []byte("test")},
+	}))
+	msg, err := frontendLoop.Recv()
+	require.NoError(t, err)
+	require.True(t, msg.Status == schedulerpb.ERROR)
+
+	// CASE 2: request without logical plan --> expect to not have fragment meta-data
+	frontendToScheduler(t, frontendLoop, &schedulerpb.FrontendToScheduler{
+		Type:        schedulerpb.ENQUEUE,
+		QueryID:     2,
+		UserID:      "test2",
+		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: []byte{}}, // empty logical plan
+	})
+	require.NoError(t, promtest.GatherAndCompare(reg, strings.NewReader(`
+		# HELP cortex_query_scheduler_queue_length Number of queries in the queue.
+		# TYPE cortex_query_scheduler_queue_length gauge
+		cortex_query_scheduler_queue_length{priority="0",type="fifo",user="test2"} 1
+		# HELP cortex_request_queue_requests_total Total number of query requests going to the request queue.
+		# TYPE cortex_request_queue_requests_total counter
+		cortex_request_queue_requests_total{priority="0",user="test2"} 1
+	`), "cortex_query_scheduler_queue_length", "cortex_request_queue_requests_total"))
+
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-1", QuerierAddress: "localhost:8000"}))
+
+	s2, err := querierLoop.Recv()
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), s2.QueryID)
+	// (the below fields should be empty because the logical plan is not in the request)
+	require.Empty(t, s2.FragmentID)
+	require.Empty(t, s2.ChildFragmentID)
+	require.Empty(t, s2.ChildAddr)
+	require.Empty(t, s2.HttpRequest.Body)
+	require.False(t, s2.IsRoot)
+
+	// CASE 3: request with correct logical plan --> expect to have fragment metadata
+	scheduler.cleanupMetricsForInactiveUser("test2")
+
+	lp := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "up")
+	bytesLp, err := logicalplan.Marshal(lp.Root())
+	form := url.Values{}
+	form.Set("plan", string(bytesLp)) // this is to imitate how the real format of http request body
+	require.NoError(t, err)
+	frontendToScheduler(t, frontendLoop, &schedulerpb.FrontendToScheduler{
+		Type:        schedulerpb.ENQUEUE,
+		QueryID:     3,
+		UserID:      "test3",
+		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: []byte(form.Encode())},
+	})
+	require.NoError(t, promtest.GatherAndCompare(reg, strings.NewReader(`
+		# HELP cortex_query_scheduler_queue_length Number of queries in the queue.
+		# TYPE cortex_query_scheduler_queue_length gauge
+		cortex_query_scheduler_queue_length{priority="0",type="fifo",user="test3"} 1
+		# HELP cortex_request_queue_requests_total Total number of query requests going to the request queue.
+		# TYPE cortex_request_queue_requests_total counter
+		cortex_request_queue_requests_total{priority="0",user="test3"} 1
+	`), "cortex_query_scheduler_queue_length", "cortex_request_queue_requests_total"))
+
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-1", QuerierAddress: "localhost:8000"}))
+
+	s3, err := querierLoop.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, s3.FragmentID)
+	require.Equal(t, uint64(3), s3.QueryID)
+	require.Empty(t, s3.ChildFragmentID) // there is only one fragment for the logical plan, so no child plan_fragments
+	require.Empty(t, s3.ChildAddr)
+	require.Equal(t, s3.HttpRequest.Body, []byte(form.Encode()))
+	require.True(t, s3.IsRoot)
+}
+
+// TestQuerierLoopClient_WithLogicalPlan_Fragmented checks if fragments of the logical plan
+// can be picked up successfully and have the correct metadata with them
+// It also tests scheduler coordination hashmap.
+// It acts as an integration test for the scheduler for distributed query execution
+// (this test relates to the design of distributed optimizer + fragmenter, so it needs to be adjusted accordingly)
+
+func TestQuerierLoopClient_WithLogicalPlan_Fragmented(t *testing.T) {
+	reg := prometheus.NewPedanticRegistry()
+
+	scheduler, frontendClient, querierClient := setupScheduler(t, reg)
+	scheduler.distributedExecEnabled = true
+
+	frontendLoop := initFrontendLoop(t, frontendClient, "frontend-12345")
+	querierLoop, err := querierClient.QuerierLoop(context.Background())
+	require.NoError(t, err)
+
+	lp_long := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) + sum(rate(node_memory_Active_bytes[5m]))")
+	bytesLp_long, err := logicalplan.Marshal(lp_long.Root())
+	form_long := url.Values{}
+	form_long.Set("plan", string(bytesLp_long)) // this is to imitate how the real format of http request body
+	require.NoError(t, err)
+	frontendToScheduler(t, frontendLoop, &schedulerpb.FrontendToScheduler{
+		Type:        schedulerpb.ENQUEUE,
+		QueryID:     4,
+		UserID:      "test",
+		HttpRequest: &httpgrpc.HTTPRequest{Method: "POST", Url: "/hello", Body: []byte(form_long.Encode())},
+	})
+	require.NoError(t, promtest.GatherAndCompare(reg, strings.NewReader(`
+		# HELP cortex_query_scheduler_queue_length Number of queries in the queue.
+		# TYPE cortex_query_scheduler_queue_length gauge
+		cortex_query_scheduler_queue_length{priority="0",type="fifo",user="test"} 3
+		# HELP cortex_request_queue_requests_total Total number of query requests going to the request queue.
+		# TYPE cortex_request_queue_requests_total counter
+		cortex_request_queue_requests_total{priority="0",user="test"} 3
+	`), "cortex_query_scheduler_queue_length", "cortex_request_queue_requests_total"))
+
+	requestLeft := getNumOfPendingRequestsLeft(scheduler)
+	require.Equal(t, 3, requestLeft)
+
+	// fragment 1
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-1", QuerierAddress: "localhost:8000"}))
+	s1, err := querierLoop.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, s1.FragmentID)
+	require.Equal(t, uint64(4), s1.QueryID)
+	require.Empty(t, s1.ChildFragmentID) // there is only one fragment for the logical plan, so no child plan_fragments
+	require.Empty(t, s1.ChildAddr)
+	require.False(t, s1.IsRoot)
+
+	// check if the new address is added to the scheduler's table
+	addr1, exist := scheduler.fragmentTable.GetMapping(s1.QueryID, []uint64{s1.FragmentID})
+	require.True(t, exist)
+	require.Equal(t, addr1[0], "localhost:8000")
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{})) // mark ready for the next task
+
+	// fragment 2
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-1", QuerierAddress: "localhost:8000"}))
+	s2, err := querierLoop.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, s2.FragmentID)
+	require.Equal(t, uint64(4), s2.QueryID)
+	require.Empty(t, s2.ChildFragmentID) // there is only one fragment for the logical plan, so no child plan_fragments
+	require.Empty(t, s2.ChildAddr)
+	require.False(t, s2.IsRoot)
+
+	addr2, exist := scheduler.fragmentTable.GetMapping(s2.QueryID, []uint64{s2.FragmentID})
+	require.True(t, exist)
+	require.Equal(t, addr2[0], "localhost:8000")
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{})) // mark ready for the next task
+
+	// fragment 3
+	require.NoError(t, querierLoop.Send(&schedulerpb.QuerierToScheduler{QuerierID: "querier-1", QuerierAddress: "localhost:8000"}))
+	s3, err := querierLoop.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, s3.FragmentID)
+	require.Equal(t, uint64(4), s3.QueryID)
+	require.Equal(t, s3.ChildFragmentID, []uint64{s1.FragmentID, s2.FragmentID}) // equal to the child fragment IDs
+	require.NotEmpty(t, s3.ChildAddr, []string{addr1[0], addr2[0]})
+	require.True(t, s3.IsRoot)
+
+	// Because this fragment is the root of the query, so the hashmap will clear all related fragments out
+	addr, exist := scheduler.fragmentTable.GetMapping(s3.QueryID, []uint64{s3.FragmentID})
+	require.False(t, exist)
+	require.Empty(t, addr)
+
+	requestLeft = getNumOfPendingRequestsLeft(scheduler)
+	require.Equal(t, 0, requestLeft)
+}
+
+func createTestLogicalPlan(t *testing.T, startTime time.Time, endTime time.Time, step time.Duration, q string) logicalplan.Plan {
+	qOpts := query.Options{
+		Start:              startTime,
+		End:                startTime,
+		Step:               0,
+		StepsBatch:         10,
+		LookbackDelta:      0,
+		EnablePerStepStats: false,
+	}
+
+	if step != 0 {
+		qOpts.End = endTime
+		qOpts.Step = step
+	}
+
+	expr, err := parser.NewParser(q, parser.WithFunctions(parser.Functions)).ParseExpr()
+	require.NoError(t, err)
+
+	planOpts := logicalplan.PlanOptions{
+		DisableDuplicateLabelCheck: false,
+	}
+
+	logicalPlan := logicalplan.NewFromAST(expr, &qOpts, planOpts)
+	optimizedPlan, _ := logicalPlan.Optimize(logicalplan.DefaultOptimizers)
+	dOptimizer := tripperware.DistributedOptimizer{}
+	dOptimizedPlanNode, _ := dOptimizer.Optimize(optimizedPlan.Root(), &qOpts)
+	lp := logicalplan.New(dOptimizedPlanNode, &qOpts, planOpts)
+
+	return lp
+}
+
 func initFrontendLoop(t *testing.T, client schedulerpb.SchedulerForFrontendClient, frontendAddr string) schedulerpb.SchedulerForFrontend_FrontendLoopClient {
 	loop, err := client.FrontendLoop(context.Background())
 	require.NoError(t, err)
@@ -499,6 +708,12 @@ func verifyNoPendingRequestsLeft(t *testing.T, scheduler *Scheduler) {
 		defer scheduler.pendingRequestsMu.Unlock()
 		return len(scheduler.pendingRequests)
 	})
+}
+
+func getNumOfPendingRequestsLeft(scheduler *Scheduler) int {
+	scheduler.pendingRequestsMu.Lock()
+	defer scheduler.pendingRequestsMu.Unlock()
+	return len(scheduler.pendingRequests)
 }
 
 type frontendMock struct {

@@ -1,0 +1,84 @@
+package distributed_execution
+
+import (
+	"encoding/binary"
+	"github.com/google/uuid"
+	"github.com/thanos-io/promql-engine/logicalplan"
+)
+
+type Fragment struct {
+	Node       logicalplan.Node
+	FragmentID uint64
+	ChildIDs   []uint64
+	IsRoot     bool
+}
+
+func getNewID() uint64 {
+	id := uuid.New()
+	return binary.BigEndian.Uint64(id[:8])
+}
+
+func (s *Fragment) IsEmpty() bool {
+	if s.Node != nil {
+		return false
+	}
+	if s.FragmentID != 0 {
+		return false
+	}
+	if s.IsRoot {
+		return false
+	}
+	if len(s.ChildIDs) != 0 {
+		return false
+	}
+	return true
+}
+
+// FragmentLogicalPlanNode fragment the logical plan by the remote node
+// and inserts the child fragment information into it
+func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment, error) {
+	newFragment := Fragment{}
+	fragments := []Fragment{}
+	nextChildrenIDs := []uint64{}
+
+	logicalplan.TraverseBottomUp(nil, &node, func(parent, current *logicalplan.Node) bool {
+		if parent == nil { // if we have reached the root
+			newFragment = Fragment{
+				Node:       node,
+				FragmentID: getNewID(),
+				ChildIDs:   nextChildrenIDs,
+				IsRoot:     true,
+			}
+			fragments = append(fragments, newFragment)
+			return false // break the loop
+		}
+		if RemoteNode == (*parent).Type() {
+			newFragment = Fragment{
+				Node:       *current,
+				FragmentID: getNewID(),
+				ChildIDs:   []uint64{},
+				IsRoot:     false,
+			}
+			fragments = append(fragments, newFragment)
+			nextChildrenIDs = append(nextChildrenIDs, newFragment.FragmentID)
+
+			// append remote node information that will be used in the execution stage
+			key := MakeFragmentKey(queryID, newFragment.FragmentID)
+			(*parent).(*Remote).FragmentKey = key
+		}
+		return false
+	})
+
+	if fragments != nil {
+		return fragments, nil
+	} else {
+		// for non-query API calls
+		// --> treat as root fragment and immediately return the result
+		return []Fragment{{
+			Node:       node,
+			FragmentID: uint64(0),
+			ChildIDs:   []uint64{},
+			IsRoot:     true,
+		}}, nil
+	}
+}

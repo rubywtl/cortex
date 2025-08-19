@@ -4,11 +4,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
-
+	"github.com/cortexproject/cortex/pkg/distributed_execution"
+	"github.com/cortexproject/cortex/pkg/ring/client"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-kit/log/level"
 	"github.com/opentracing-contrib/go-stdlib/nethttp"
@@ -361,6 +366,37 @@ func (t *Cortex) initTenantFederation() (serv services.Service, err error) {
 //	                                          │                  │
 //	                                          └──────────────────┘
 func (t *Cortex) initQuerier() (serv services.Service, err error) {
+
+	t.Cfg.Worker.MaxConcurrentRequests = t.Cfg.Querier.MaxConcurrent
+	t.Cfg.Worker.TargetHeaders = t.Cfg.API.HTTPRequestHeadersToLog
+
+	ipAddr, err := ring.GetInstanceAddr(t.Cfg.Alertmanager.ShardingRing.InstanceAddr, t.Cfg.Alertmanager.ShardingRing.InstanceInterfaceNames, util_log.Logger)
+	if err != nil {
+		return nil, err
+	}
+	serverAddress := net.JoinHostPort(ipAddr, strconv.Itoa(t.Cfg.Server.GRPCListenPort))
+
+	// Create new map for caching partial results during distributed execution
+	var queryResultCache *distributed_execution.QueryResultCache
+	var queryServer *distributed_execution.QuerierServer
+
+	if t.Cfg.Querier.DistributedExecEnabled {
+		// set up querier server service and register it
+		queryResultCache = distributed_execution.NewQueryResultCache()
+		queryServer = distributed_execution.NewQuerierServer(queryResultCache)
+
+		go func() {
+			// TODO: make expire time a config var
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				queryResultCache.CleanExpired()
+			}
+		}()
+		t.API.RegisterQuerierServer(queryServer)
+	}
+
 	// Create a internal HTTP handler that is configured with the Prometheus API routes and points
 	// to a Prometheus API struct instantiated with the Cortex Queryable.
 	internalQuerierRouter := api.NewQuerierHandler(
@@ -369,9 +405,11 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 		t.QuerierQueryable,
 		t.ExemplarQueryable,
 		t.QuerierEngine,
+		queryResultCache,
 		t.MetadataQuerier,
 		prometheus.DefaultRegisterer,
 		util_log.Logger,
+		t.Cfg.Querier.DistributedExecEnabled,
 	)
 
 	// If the querier is running standalone without the query-frontend or query-scheduler, we must register it's internal
@@ -412,9 +450,25 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 		return nil, nil
 	}
 
-	t.Cfg.Worker.MaxConcurrentRequests = t.Cfg.Querier.MaxConcurrent
-	t.Cfg.Worker.TargetHeaders = t.Cfg.API.HTTPRequestHeadersToLog
-	return querier_worker.NewQuerierWorker(t.Cfg.Worker, httpgrpc_server.NewServer(internalQuerierRouter), util_log.Logger, prometheus.DefaultRegisterer)
+	if t.Cfg.Querier.DistributedExecEnabled {
+		querierPool := distributed_execution.NewQuerierPool(t.Cfg.QueryScheduler.GRPCClientConfig, prometheus.DefaultRegisterer, util_log.Logger)
+		internalQuerierRouter = injectPool(internalQuerierRouter, querierPool)
+		//go watchQuerierRingAndUpdatePool(context.Background(), t.Ring, querierPool)
+	}
+
+	return querier_worker.NewQuerierWorker(t.Cfg.Worker, httpgrpc_server.NewServer(internalQuerierRouter), util_log.Logger, prometheus.DefaultRegisterer, serverAddress, t.Cfg.Querier.DistributedExecEnabled, queryResultCache)
+}
+
+func injectPool(next http.Handler, pool *client.Pool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.Contains(r.Header.Get("Content-Type"), "application/grpc") {
+			ctx := distributed_execution.ContextWithPool(r.Context(), pool)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		ctx := distributed_execution.ContextWithPool(r.Context(), pool)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 func (t *Cortex) initStoreQueryables() (services.Service, error) {
@@ -796,7 +850,6 @@ func (t *Cortex) initMemberlistKV() (services.Service, error) {
 	t.Cfg.Compactor.ShardingRing.KVStore.MemberlistKV = t.MemberlistKV.GetMemberlistKV
 	t.Cfg.Ruler.Ring.KVStore.MemberlistKV = t.MemberlistKV.GetMemberlistKV
 	t.Cfg.Alertmanager.ShardingRing.KVStore.MemberlistKV = t.MemberlistKV.GetMemberlistKV
-	t.Cfg.ParquetConverter.Ring.KVStore.MemberlistKV = t.MemberlistKV.GetMemberlistKV
 
 	return t.MemberlistKV, nil
 }
@@ -818,7 +871,7 @@ func (t *Cortex) initQueryScheduler() (services.Service, error) {
 		tenant.WithDefaultResolver(tenantfederation.NewRegexValidator())
 	}
 
-	s, err := scheduler.NewScheduler(t.Cfg.QueryScheduler, t.Overrides, util_log.Logger, prometheus.DefaultRegisterer)
+	s, err := scheduler.NewScheduler(t.Cfg.QueryScheduler, t.Overrides, util_log.Logger, prometheus.DefaultRegisterer, t.Cfg.Querier.DistributedExecEnabled)
 	if err != nil {
 		return nil, errors.Wrap(err, "query-scheduler init")
 	}
