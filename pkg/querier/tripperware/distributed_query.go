@@ -88,18 +88,20 @@ func (d distributedQueryMiddleware) Do(ctx context.Context, r Request) (Response
 		return nil, httpgrpc.Errorf(http.StatusBadRequest, "invalid request format")
 	}
 
-	startTime := time.Unix(0, promReq.Start*int64(time.Millisecond))
-	endTime := time.Unix(0, promReq.End*int64(time.Millisecond))
-	step := time.Duration(promReq.Step) * time.Millisecond
+	if promReq.DistributedExec {
+		startTime := time.Unix(0, promReq.Start*int64(time.Millisecond))
+		endTime := time.Unix(0, promReq.End*int64(time.Millisecond))
+		step := time.Duration(promReq.Step) * time.Millisecond
 
-	var err error
+		var err error
 
-	newLogicalPlan, err := d.newLogicalPlan(promReq.Query, startTime, endTime, step)
-	if err != nil {
-		return nil, err
+		newLogicalPlan, err := d.newLogicalPlan(promReq.Query, startTime, endTime, step)
+		if err != nil {
+			return nil, err
+		}
+
+		promReq.LogicalPlan = *newLogicalPlan
 	}
-
-	promReq.LogicalPlan = *newLogicalPlan
 
 	return d.next.Do(ctx, r)
 }

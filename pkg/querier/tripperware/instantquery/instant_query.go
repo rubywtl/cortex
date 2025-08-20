@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +81,9 @@ func (c instantQueryCodec) DecodeRequest(_ context.Context, r *http.Request, for
 	result.Query = r.FormValue("query")
 	result.Stats = r.FormValue("stats")
 	result.Path = r.URL.Path
+
+	strBool := r.FormValue("distributedExec")
+	result.DistributedExec, _ = strconv.ParseBool(strBool)
 
 	isSourceRuler := strings.Contains(r.Header.Get("User-Agent"), tripperware.RulerUserAgent)
 	if isSourceRuler {

@@ -148,17 +148,18 @@ type CachingOptions struct {
 
 type PrometheusRequest struct {
 	Request
-	Time           int64
-	Start          int64
-	End            int64
-	Step           int64
-	Timeout        time.Duration
-	Query          string
-	Path           string
-	Headers        http.Header
-	Stats          string
-	CachingOptions CachingOptions
-	LogicalPlan    logicalplan.Plan
+	Time            int64
+	Start           int64
+	End             int64
+	Step            int64
+	Timeout         time.Duration
+	Query           string
+	Path            string
+	Headers         http.Header
+	Stats           string
+	CachingOptions  CachingOptions
+	LogicalPlan     logicalplan.Plan
+	DistributedExec bool
 }
 
 func (m *PrometheusRequest) GetPath() string {
