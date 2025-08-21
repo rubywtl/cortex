@@ -22,7 +22,7 @@ func TestRequestDistributedExec(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			url:         "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&stats=all&time=1536673680",
+			url:         "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&stats=all&time=1536673680&distributedExec=false",
 			expectedURL: "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&stats=all&time=1536673680",
 			expected: &tripperware.PrometheusRequest{
 				Path:  "/api/v1/query",
@@ -39,23 +39,38 @@ func TestRequestDistributedExec(t *testing.T) {
 			url:         "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680&distributedExec=false",
 			expectedURL: "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680",
 			expected: &tripperware.PrometheusRequest{
-				Path:            "/api/v1/query",
-				Time:            1536673680 * 1e3,
-				Query:           "sum(container_memory_rss) by (namespace)",
-				DistributedExec: false,
-				Stats:           "",
+				Path:  "/api/v1/query",
+				Time:  1536673680 * 1e3,
+				Query: "sum(container_memory_rss) by (namespace)",
+				Stats: "",
 				Headers: map[string][]string{
 					"Test-Header": {"test"},
 				},
+				DistributedExec: false,
 			},
 		},
 		{
 			url:         "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680&distributedExec=true",
 			expectedURL: "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680",
 			expected: &tripperware.PrometheusRequest{
-				Path:            "/api/v1/query",
-				Time:            1536673680 * 1e3,
-				Query:           "sum(container_memory_rss) by (namespace)",
+				Path:  "/api/v1/query",
+				Time:  1536673680 * 1e3,
+				Query: "sum(container_memory_rss) by (namespace)",
+				Stats: "",
+				Headers: map[string][]string{
+					"Test-Header": {"test"},
+				},
+				DistributedExec: true,
+			},
+		},
+		{
+			url:         "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680",
+			expectedURL: "/api/v1/query?query=sum%28container_memory_rss%29+by+%28namespace%29&time=1536673680",
+			expected: &tripperware.PrometheusRequest{
+				Path:  "/api/v1/query",
+				Time:  1536673680 * 1e3,
+				Query: "sum(container_memory_rss) by (namespace)",
+				// if empty, it should still be run (treated as true)
 				DistributedExec: true,
 				Stats:           "",
 				Headers: map[string][]string{
@@ -90,6 +105,10 @@ func TestRequestDistributedExec(t *testing.T) {
 			rdash, err := codec.EncodeRequest(context.Background(), req)
 			require.NoError(t, err)
 			require.EqualValues(t, tc.expectedURL, rdash.RequestURI)
+
+			if !tc.expected.DistributedExec {
+				require.Empty(t, tc.expected.LogicalPlan)
+			}
 		})
 	}
 }

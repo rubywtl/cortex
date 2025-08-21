@@ -59,11 +59,16 @@ type querierPool struct {
 }
 
 func (q *querierPool) createQuerierClient(addr string) (client.PoolClient, error) {
+
 	opts, err := q.grpcConfig.DialOption([]grpc.UnaryClientInterceptor{
 		otgrpc.OpenTracingClientInterceptor(opentracing.GlobalTracer()),
 		middleware.ClientUserHeaderInterceptor,
 		cortexmiddleware.PrometheusGRPCUnaryInstrumentation(q.requestDuration),
-	}, nil)
+	}, []grpc.StreamClientInterceptor{
+		otgrpc.OpenTracingStreamClientInterceptor(opentracing.GlobalTracer()),
+		middleware.StreamClientUserHeaderInterceptor,
+		cortexmiddleware.PrometheusGRPCStreamInstrumentation(q.requestDuration),
+	})
 
 	if err != nil {
 		return nil, err

@@ -83,7 +83,11 @@ func (c instantQueryCodec) DecodeRequest(_ context.Context, r *http.Request, for
 	result.Path = r.URL.Path
 
 	strBool := r.FormValue("distributedExec")
-	result.DistributedExec, _ = strconv.ParseBool(strBool)
+	if strBool == "" {
+		result.DistributedExec = true // default true
+	} else {
+		result.DistributedExec, _ = strconv.ParseBool(strBool)
+	}
 
 	isSourceRuler := strings.Contains(r.Header.Get("User-Agent"), tripperware.RulerUserAgent)
 	if isSourceRuler {

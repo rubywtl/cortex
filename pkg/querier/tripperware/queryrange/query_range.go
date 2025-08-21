@@ -129,7 +129,11 @@ func (c prometheusCodec) DecodeRequest(_ context.Context, r *http.Request, forwa
 	}
 
 	strBool := r.FormValue("distributedExec")
-	result.DistributedExec, _ = strconv.ParseBool(strBool)
+	if strBool == "" {
+		result.DistributedExec = true // default true
+	} else {
+		result.DistributedExec, _ = strconv.ParseBool(strBool)
+	}
 
 	// For safety, limit the number of returned points per timeseries.
 	// This is sufficient for 60s resolution for a week or 1h resolution for a year.
