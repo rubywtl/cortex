@@ -163,7 +163,7 @@ func newDistributedRemoteExecution(ctx context.Context, pool *client.Pool, fragm
 		batchSize:   1000,
 		fragmentKey: fragmentKey,
 		addr:        childIDToAddr[fragmentKey.fragmentID],
-		buffer:      nil,
+		buffer:      []model.StepVector{},
 		bufferIndex: 0,
 		initialized: false,
 	}
@@ -288,7 +288,7 @@ func (d *DistributedRemoteExecution) Next(ctx context.Context) ([]model.StepVect
 		}
 	}
 
-	end := int(d.batchSize)
+	end := len(d.buffer)
 	if end > len(d.buffer) {
 		end = len(d.buffer)
 	}
