@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/cortexproject/cortex/pkg/querier"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,7 +233,7 @@ func TestBuildInfoAPI(t *testing.T) {
 			version.Version = tc.version
 			version.Branch = tc.branch
 			version.Revision = tc.revision
-			handler := NewQuerierHandler(cfg, nil, nil, nil, nil, nil, nil, &FakeLogger{}, false)
+			handler := NewQuerierHandler(cfg, querier.Config{}, nil, nil, nil, nil, nil, nil, &FakeLogger{}, false)
 			writer := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/api/v1/status/buildinfo", nil)
 			req = req.WithContext(user.InjectOrgID(req.Context(), "test"))

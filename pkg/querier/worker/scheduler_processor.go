@@ -161,11 +161,7 @@ func (sp *schedulerProcessor) querierLoop(c schedulerpb.SchedulerForQuerier_Quer
 				level.Info(logger).Log("msg", "started running request")
 			}
 
-			if len(request.ChildAddr) != len(request.ChildFragmentID) {
-				level.Error(logger).Log("mismatch between childIDs length (%d) and childAddr length (%d)", len(request.ChildFragmentID), len(request.ChildAddr))
-			} else {
-				ctx = distributed_execution.InjectFragmentMetaData(ctx, request.FragmentID, request.QueryID, request.IsRoot, request.ChildFragmentID, request.ChildAddr)
-			}
+			ctx = distributed_execution.InjectFragmentMetaData(ctx, request.FragmentID, request.QueryID, request.IsRoot, request.ChildIDtoAddrs)
 
 			sp.runRequest(ctx, logger, request.QueryID, request.FrontendAddress, request.StatsEnabled, request.HttpRequest, request.IsRoot)
 

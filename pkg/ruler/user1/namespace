@@ -1,0 +1,7 @@
+groups:
+    - name: second
+      interval: 1m
+      rules: []
+    - name: first
+      interval: 1m
+      rules: []

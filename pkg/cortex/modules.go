@@ -7,11 +7,9 @@ import (
 	"github.com/cortexproject/cortex/pkg/distributed_execution"
 	"github.com/cortexproject/cortex/pkg/ring/client"
 	"log/slog"
-	"net"
 	"net/http"
 	"runtime"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"time"
 
@@ -370,12 +368,6 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 	t.Cfg.Worker.MaxConcurrentRequests = t.Cfg.Querier.MaxConcurrent
 	t.Cfg.Worker.TargetHeaders = t.Cfg.API.HTTPRequestHeadersToLog
 
-	ipAddr, err := ring.GetInstanceAddr(t.Cfg.Alertmanager.ShardingRing.InstanceAddr, t.Cfg.Alertmanager.ShardingRing.InstanceInterfaceNames, util_log.Logger)
-	if err != nil {
-		return nil, err
-	}
-	serverAddress := net.JoinHostPort(ipAddr, strconv.Itoa(t.Cfg.Server.GRPCListenPort))
-
 	// Create new map for caching partial results during distributed execution
 	var queryResultCache *distributed_execution.QueryResultCache
 	var queryServer *distributed_execution.QuerierServer
@@ -451,12 +443,12 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 	}
 
 	if t.Cfg.Querier.DistributedExecEnabled {
-		querierPool := distributed_execution.NewQuerierPool(t.Cfg.QueryScheduler.GRPCClientConfig, prometheus.DefaultRegisterer, util_log.Logger)
+		querierPool := distributed_execution.NewQuerierPool(t.Cfg.Worker.GRPCClientConfig, prometheus.DefaultRegisterer, util_log.Logger)
 		internalQuerierRouter = injectPool(internalQuerierRouter, querierPool)
 		//go watchQuerierRingAndUpdatePool(context.Background(), t.Ring, querierPool)
 	}
 
-	return querier_worker.NewQuerierWorker(t.Cfg.Worker, httpgrpc_server.NewServer(internalQuerierRouter), util_log.Logger, prometheus.DefaultRegisterer, serverAddress, t.Cfg.Querier.DistributedExecEnabled, queryResultCache)
+	return querier_worker.NewQuerierWorker(t.Cfg.Worker, httpgrpc_server.NewServer(internalQuerierRouter), util_log.Logger, prometheus.DefaultRegisterer, t.Cfg.Querier.DistributedExecEnabled, queryResultCache)
 }
 
 func injectPool(next http.Handler, pool *client.Pool) http.Handler {

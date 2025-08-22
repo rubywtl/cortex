@@ -38,7 +38,7 @@ func TestRemoteNode(t *testing.T) {
 
 	t.Run("JSON marshaling/unmarshaling", func(t *testing.T) {
 		original := &Remote{
-			FragmentKey:  *MakeFragmentKey(1, 2),
+			FragmentKey:  MakeFragmentKey(1, 2),
 			FragmentAddr: "[IP_ADDRESS]:9090",
 		}
 

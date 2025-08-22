@@ -45,7 +45,12 @@ func TestFragmentMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// injection
 			ctx := context.Background()
-			newCtx := InjectFragmentMetaData(ctx, tt.fragID, tt.queryID, tt.isRoot, tt.childIDs, tt.childAddr)
+
+			childIDToAddr := make(map[uint64]string)
+			for i, childID := range tt.childIDs {
+				childIDToAddr[childID] = tt.childAddr[i]
+			}
+			newCtx := InjectFragmentMetaData(ctx, tt.fragID, tt.queryID, tt.isRoot, childIDToAddr)
 
 			// extraction
 			isRoot, queryID, fragmentID, childAddrs, ok := ExtractFragmentMetaData(newCtx)

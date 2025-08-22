@@ -18,20 +18,20 @@ func TestSchedulerCoordination(t *testing.T) {
 		table.AddMapping(uint64(0), uint64(1), "localhost:8000")
 		table.AddMapping(uint64(0), uint64(2), "localhost:8001")
 
-		result, exist := table.GetMapping(uint64(0), []uint64{1, 2})
+		result, exist := table.GetAllChildAddresses(uint64(0), []uint64{1, 2})
 		require.True(t, exist)
 		require.Equal(t, []string{"localhost:8000", "localhost:8001"}, result)
 
-		result, exist = table.GetMapping(uint64(0), []uint64{1, 3})
+		result, exist = table.GetAllChildAddresses(uint64(0), []uint64{1, 3})
 		require.False(t, exist)
 		require.Empty(t, result)
 
-		result, exist = table.GetMapping(uint64(0), []uint64{1})
+		result, exist = table.GetAllChildAddresses(uint64(0), []uint64{1})
 		require.True(t, exist)
 		require.Equal(t, []string{"localhost:8000"}, result)
 
 		table.ClearMappings(uint64(0))
-		result, exist = table.GetMapping(uint64(0), []uint64{1})
+		result, exist = table.GetAllChildAddresses(uint64(0), []uint64{1})
 		require.False(t, exist)
 		require.Empty(t, result)
 	})
@@ -64,7 +64,7 @@ func TestSchedulerCoordination(t *testing.T) {
 				for j := 0; j < numOperations; j++ {
 					queryID := uint64(routine)
 					fragmentIDs := []uint64{uint64(j)}
-					table.GetMapping(queryID, fragmentIDs)
+					table.GetAllChildAddresses(queryID, fragmentIDs)
 				}
 			}(i)
 		}
@@ -87,7 +87,7 @@ func TestSchedulerCoordination(t *testing.T) {
 		table := NewFragmentTable(2 * time.Minute)
 
 		// test empty fragment IDs
-		result, exist := table.GetMapping(0, []uint64{})
+		result, exist := table.GetAllChildAddresses(0, []uint64{})
 		require.True(t, exist)
 		require.Empty(t, result)
 
@@ -100,18 +100,18 @@ func TestSchedulerCoordination(t *testing.T) {
 		// test overwriting mapping
 		table.AddMapping(1, 1, "addr1")
 		table.AddMapping(1, 1, "addr2")
-		result, exist = table.GetMapping(1, []uint64{1})
+		result, exist = table.GetAllChildAddresses(1, []uint64{1})
 		require.True(t, exist)
 		require.Equal(t, []string{"addr2"}, result)
 
 		// test multiple queries
 		table.AddMapping(1, 1, "addr1")
 		table.AddMapping(2, 1, "addr2")
-		result, exist = table.GetMapping(1, []uint64{1})
+		result, exist = table.GetAllChildAddresses(1, []uint64{1})
 		require.True(t, exist)
 		require.Equal(t, []string{"addr1"}, result)
 
-		result, exist = table.GetMapping(2, []uint64{1})
+		result, exist = table.GetAllChildAddresses(2, []uint64{1})
 		require.True(t, exist)
 		require.Equal(t, []string{"addr2"}, result)
 	})
@@ -165,7 +165,7 @@ func TestFragmentTableStress(t *testing.T) {
 							errorCount.Add(1)
 						}
 					}()
-					_, _ = table.GetMapping(i, []uint64{i})
+					_, _ = table.GetAllChildAddresses(i, []uint64{i})
 					readCount.Add(1)
 					i++
 				}()

@@ -35,8 +35,10 @@ func NewQuerierPool(cfg grpcclient.Config, reg prometheus.Registerer, log log.Lo
 	}, []string{"operation", "status_code"})
 
 	clientsGauge := promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-		Name: "cortex_querier_query_clients",
-		Help: "The current number of clients connected to querier.",
+		Namespace:   "cortex",
+		Name:        "cortex_querier_query_clients",
+		Help:        "TThe current number of clients connected to querier.",
+		ConstLabels: map[string]string{"client": "querier"},
 	})
 
 	poolConfig := client.PoolConfig{

@@ -4,7 +4,11 @@ import (
 	"context"
 	"flag"
 	"github.com/cortexproject/cortex/pkg/distributed_execution"
+	"github.com/cortexproject/cortex/pkg/ring"
+	"github.com/cortexproject/cortex/pkg/util/flagext"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +38,10 @@ type Config struct {
 	GRPCClientConfig grpcclient.Config `yaml:"grpc_client_config"`
 
 	TargetHeaders []string `yaml:"-"` // Propagated by config.
+
+	InstanceInterfaceNames []string `yaml:"instance_interface_names"`
+	ListenPort             int      `yaml:"-"`
+	InstanceAddr           string   `yaml:"instance_addr" doc:"hidden"`
 }
 
 func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
@@ -47,6 +55,10 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 	f.StringVar(&cfg.QuerierID, "querier.id", "", "Querier ID, sent to frontend service to identify requests from the same querier. Defaults to hostname.")
 
 	cfg.GRPCClientConfig.RegisterFlagsWithPrefix("querier.frontend-client", "", f)
+
+	cfg.InstanceInterfaceNames = []string{"eth0", "en0"}
+	f.Var((*flagext.StringSlice)(&cfg.InstanceInterfaceNames), "querier.instance-interface-names", "Name of network interface to read address from.")
+	f.StringVar(&cfg.InstanceAddr, "querier.instance-addr", "", "IP address to advertise in the ring.")
 }
 
 func (cfg *Config) Validate(log log.Logger) error {
@@ -92,7 +104,7 @@ type querierWorker struct {
 	managers map[string]*processorManager
 }
 
-func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer, querierAddr string,
+func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg prometheus.Registerer,
 	distributedExecEnabled bool, queryResultCache *distributed_execution.QueryResultCache) (services.Service, error) {
 	if cfg.QuerierID == "" {
 		hostname, err := os.Hostname()
@@ -109,6 +121,14 @@ func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg pr
 	switch {
 	case cfg.SchedulerAddress != "":
 		level.Info(log).Log("msg", "Starting querier worker connected to query-scheduler", "scheduler", cfg.SchedulerAddress)
+
+		ipAddr, err := ring.GetInstanceAddr(cfg.InstanceAddr, cfg.InstanceInterfaceNames, log)
+		if err != nil {
+			return nil, err
+		}
+		querierAddr := net.JoinHostPort(ipAddr, strconv.Itoa(cfg.ListenPort))
+
+		processor, servs = newSchedulerProcessor(cfg, handler, log, reg, querierAddr)
 
 		address = cfg.SchedulerAddress
 		processor, servs = newSchedulerProcessor(cfg, handler, log, reg, querierAddr)

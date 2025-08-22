@@ -13,12 +13,7 @@ type fragmentMetadata struct {
 	isRoot        bool
 }
 
-func InjectFragmentMetaData(ctx context.Context, fragmentID uint64, queryID uint64, isRoot bool, childIDs []uint64, childAddr []string) context.Context {
-
-	childIDToAddr := make(map[uint64]string, len(childIDs))
-	for i, childID := range childIDs {
-		childIDToAddr[childID] = childAddr[i]
-	}
+func InjectFragmentMetaData(ctx context.Context, fragmentID uint64, queryID uint64, isRoot bool, childIDToAddr map[uint64]string) context.Context {
 
 	return context.WithValue(ctx, fragmentMetadataKey{}, fragmentMetadata{
 		queryID:       queryID,

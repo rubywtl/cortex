@@ -599,9 +599,15 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 	// monitoring the contexts in a select and cancel things appropriately.
 	errCh := make(chan error, 1)
 	go func() {
-		childAddrs := []string{}
+		childIDToAddress := map[uint64]string{}
 		if len(req.fragment.ChildIDs) != 0 {
-			childAddrs, _ = s.fragmentTable.GetAllChildAddresses(req.queryID, req.fragment.ChildIDs)
+			for _, childID := range req.fragment.ChildIDs {
+				addr, ok := s.fragmentTable.GetChildAddr(req.queryID, childID)
+				if !ok {
+					return
+				}
+				childIDToAddress[childID] = addr
+			}
 		}
 
 		err := querier.Send(&schedulerpb.SchedulerToQuerier{
@@ -611,8 +617,7 @@ func (s *Scheduler) forwardRequestToQuerier(querier schedulerpb.SchedulerForQuer
 			HttpRequest:     req.request,
 			StatsEnabled:    req.statsEnabled,
 			FragmentID:      req.fragment.FragmentID,
-			ChildFragmentID: req.fragment.ChildIDs,
-			ChildAddr:       childAddrs,
+			ChildIDtoAddrs:  childIDToAddress,
 			IsRoot:          req.fragment.IsRoot,
 		})
 

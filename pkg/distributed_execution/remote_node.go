@@ -288,7 +288,7 @@ func (d *DistributedRemoteExecution) Next(ctx context.Context) ([]model.StepVect
 		}
 	}
 
-	end := len(d.buffer)
+	end := d.numSteps
 	if end > len(d.buffer) {
 		end = len(d.buffer)
 	}

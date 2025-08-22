@@ -1450,3 +1450,124 @@ func TestQuerierDistributedExecution(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedVector2, val.(model.Vector))
 }
+
+func TestDistributedExecResults(t *testing.T) {
+	// e2e test setup
+	s, err := e2e.NewScenario(networkName)
+	require.NoError(t, err)
+	defer s.Close()
+
+	// initialize the flags
+	flags := mergeFlags(
+		BlocksStorageFlags(),
+		map[string]string{
+			"-blocks-storage.tsdb.block-ranges-period": (5 * time.Second).String(),
+			"-blocks-storage.tsdb.ship-interval":       "1s",
+			"-blocks-storage.tsdb.retention-period":    ((5 * time.Second * 2) - 1).String(),
+			"-querier.thanos-engine":                   "true",
+			"-querier.distributed-exec-enabled":        "true",
+		},
+	)
+
+	flags2 := mergeFlags(
+		BlocksStorageFlags(),
+		map[string]string{
+			"-blocks-storage.tsdb.block-ranges-period": (5 * time.Second).String(),
+			"-blocks-storage.tsdb.ship-interval":       "1s",
+			"-blocks-storage.tsdb.retention-period":    ((5 * time.Second * 2) - 1).String(),
+			"-querier.thanos-engine":                   "true",
+			"-querier.distributed-exec-enabled":        "false",
+		},
+	)
+
+	minio := e2edb.NewMinio(9000, flags["-blocks-storage.s3.bucket-name"])
+	consul := e2edb.NewConsul()
+	require.NoError(t, s.StartAndWaitReady(consul, minio))
+
+	// START SERVICE 1
+	distributor := e2ecortex.NewDistributor("distributor", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	ingester := e2ecortex.NewIngester("ingester", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	queryScheduler := e2ecortex.NewQueryScheduler("query-scheduler", flags, "")
+	storeGateway := e2ecortex.NewStoreGateway("store-gateway", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	require.NoError(t, s.StartAndWaitReady(queryScheduler, distributor, ingester, storeGateway))
+	flags = mergeFlags(flags, map[string]string{
+		"-querier.store-gateway-addresses": strings.Join([]string{storeGateway.NetworkGRPCEndpoint()}, ","),
+	})
+	queryFrontend := e2ecortex.NewQueryFrontend("query-frontend", mergeFlags(flags, map[string]string{
+		"-frontend.scheduler-address": queryScheduler.NetworkGRPCEndpoint(),
+	}), "")
+	require.NoError(t, s.Start(queryFrontend))
+	querier := e2ecortex.NewQuerier("querier", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), mergeFlags(flags, map[string]string{
+		"-querier.scheduler-address": queryScheduler.NetworkGRPCEndpoint(),
+	}), "")
+	require.NoError(t, s.StartAndWaitReady(querier))
+
+	require.NoError(t, distributor.WaitSumMetrics(e2e.Equals(512), "cortex_ring_tokens_total"))
+	require.NoError(t, querier.WaitSumMetrics(e2e.Equals(2*512), "cortex_ring_tokens_total"))
+
+	c, err := e2ecortex.NewClient(distributor.HTTPEndpoint(), queryFrontend.HTTPEndpoint(), "", "", "user-1")
+	require.NoError(t, err)
+
+	// START SERVICE 2
+	distributor2 := e2ecortex.NewDistributor("distributor", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags2, "")
+	ingester2 := e2ecortex.NewIngester("ingester", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags2, "")
+	queryScheduler2 := e2ecortex.NewQueryScheduler("query-scheduler", flags2, "")
+	storeGateway2 := e2ecortex.NewStoreGateway("store-gateway", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	require.NoError(t, s.StartAndWaitReady(queryScheduler2, distributor2, ingester2, storeGateway2))
+	flags2 = mergeFlags(flags2, map[string]string{
+		"-querier.store-gateway-addresses": strings.Join([]string{storeGateway2.NetworkGRPCEndpoint()}, ","),
+	})
+	queryFrontend2 := e2ecortex.NewQueryFrontend("query-frontend", mergeFlags(flags2, map[string]string{
+		"-frontend.scheduler-address": queryScheduler2.NetworkGRPCEndpoint(),
+	}), "")
+	require.NoError(t, s.Start(queryFrontend2))
+	querier2 := e2ecortex.NewQuerier("querier", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), mergeFlags(flags2, map[string]string{
+		"-querier.scheduler-address": queryScheduler2.NetworkGRPCEndpoint(),
+	}), "")
+	require.NoError(t, s.StartAndWaitReady(querier2))
+	require.NoError(t, distributor2.WaitSumMetrics(e2e.Equals(512), "cortex_ring_tokens_total"))
+	require.NoError(t, querier2.WaitSumMetrics(e2e.Equals(2*512), "cortex_ring_tokens_total"))
+	c2, err := e2ecortex.NewClient(distributor.HTTPEndpoint(), queryFrontend2.HTTPEndpoint(), "", "", "user-2")
+	require.NoError(t, err)
+
+	// INJECT DATA
+	series1Timestamp := time.Now()
+	series2Timestamp := series1Timestamp
+	series1, expectedVector1 := generateSeries("series_1", series1Timestamp, prompb.Label{Name: "series_1", Value: "series_1"})
+	series2, expectedVector2 := generateSeries("series_2", series2Timestamp, prompb.Label{Name: "series_2", Value: "series_2"})
+
+	res, err := c.Push(series1)
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+	res, err = c2.Push(series1)
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+
+	res, err = c.Push(series2)
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+	res, err = c2.Push(series2)
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+
+	var val model.Value
+	val, err = c.Query("series_1", series1Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, expectedVector1, val.(model.Vector))
+	val, err = c.Query("series_2", series2Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, expectedVector2, val.(model.Vector))
+
+	val, err = c2.Query("series_1", series1Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, expectedVector1, val.(model.Vector))
+	val, err = c2.Query("series_2", series2Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, expectedVector2, val.(model.Vector))
+
+	val, err = c.Query("sum(series_1)+sum(series_2)", series1Timestamp)
+	require.NoError(t, err)
+	val_distributed, err := c2.Query("sum(series_1)+sum(series_2)", series1Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, val, val_distributed)
+}
