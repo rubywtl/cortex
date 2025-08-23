@@ -10,6 +10,55 @@ import (
 	"github.com/thanos-io/promql-engine/query"
 )
 
+func TestDistributedOptimizerWithShard(t *testing.T) {
+	now := time.Now()
+	testCases := []struct {
+		name            string
+		query           string
+		start           time.Time
+		end             time.Time
+		step            time.Duration
+		remoteExecCount int
+	}{
+		{
+			name:            "sum",
+			query:           "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m]))",
+			start:           now,
+			end:             now,
+			step:            time.Minute,
+			remoteExecCount: 2,
+		},
+		{
+			name:            "count",
+			query:           "count(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m]))",
+			start:           now,
+			end:             now,
+			step:            time.Minute,
+			remoteExecCount: 2,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			lp, _, err := CreateTestLogicalPlan(tc.query, tc.start, tc.end, tc.step)
+			require.NoError(t, err)
+
+			d := DistributedOptimizer{}
+			newRoot, _, err := d.Optimize((*lp).Root())
+			require.NoError(t, err)
+
+			remoteNodeCount := 0
+			logicalplan.TraverseBottomUp(nil, &newRoot, func(parent, current *logicalplan.Node) bool {
+				if RemoteNode == (*current).Type() {
+					remoteNodeCount++
+				}
+				return false
+			})
+			require.Equal(t, tc.remoteExecCount, remoteNodeCount)
+		})
+	}
+}
+
 func TestDistributedOptimizer(t *testing.T) {
 	now := time.Now()
 	testCases := []struct {

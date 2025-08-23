@@ -15,15 +15,21 @@ import (
 // , so if it changes the expected value will also need to be adjusted)
 
 func TestFragmenter(t *testing.T) {
+
+	lp3 := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m]))")
+	res3, err := FragmentLogicalPlanNode(0, lp3.Root())
+	require.NoError(t, err)
+	require.Equal(t, 3, len(res3))
+
 	lp := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "sum(rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])) + sum(rate(node_memory_Active_bytes[5m]))")
 	res, err := FragmentLogicalPlanNode(0, lp.Root())
 	require.NoError(t, err)
-	require.Equal(t, 3, len(res))
+	require.Equal(t, 7, len(res))
 
 	lp2 := createTestLogicalPlan(t, time.Now(), time.Now(), 0, "sum(rate(http_requests_total{job=\"api\"}[5m])) + sum(rate(http_requests_total{job=\"web\"}[5m])) - sum(rate(http_requests_total{job=\"cache\"}[5m]))")
 	res2, err2 := FragmentLogicalPlanNode(0, lp2.Root())
 	require.NoError(t, err2)
-	require.Equal(t, 5, len(res2))
+	require.Equal(t, 11, len(res2))
 }
 
 func createTestLogicalPlan(t *testing.T, startTime time.Time, endTime time.Time, step time.Duration, q string) logicalplan.Plan {
