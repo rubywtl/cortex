@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -2211,6 +2212,42 @@ func createUserStats(db *userTSDB, activeSeriesMetricsEnabled bool) UserStats {
 
 const queryStreamBatchMessageSize = 1 * 1024 * 1024
 
+const CortexIngesterShardLabel = "__cortex_ingester_shard__"
+
+type IngesterShardInfo struct {
+	ShardCount int
+	ShardIndex int
+}
+
+func ExtractIngesterShardInfo(matchers []*labels.Matcher) ([]*labels.Matcher, *IngesterShardInfo, error) {
+	r := make([]*labels.Matcher, 0, len(matchers))
+
+	shardInfo := IngesterShardInfo{}
+	for _, matcher := range matchers {
+		if matcher.Name == CortexIngesterShardLabel && matcher.Type == labels.MatchEqual {
+			parts := strings.Split(matcher.Value, "_")
+			if len(parts) != 2 {
+				return r, nil, fmt.Errorf("invalid shard info: %s", matcher.Value)
+			}
+
+			shardCount, err := strconv.Atoi(parts[0])
+			if err != nil {
+				return r, nil, fmt.Errorf("invalid shard count: %s", parts[0])
+			}
+			shardIndex, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return r, nil, fmt.Errorf("invalid shard index: %s", parts[1])
+			}
+			shardInfo.ShardCount = shardCount
+			shardInfo.ShardIndex = shardIndex
+		} else {
+			r = append(r, matcher)
+		}
+	}
+
+	return r, &shardInfo, nil
+}
+
 // QueryStream implements service.IngesterServer
 // Streams metrics from a TSDB. This implements the client.IngesterServer interface
 func (i *Ingester) QueryStream(req *client.QueryRequest, stream client.Ingester_QueryStreamServer) (err error) {
@@ -2243,6 +2280,10 @@ func (i *Ingester) QueryStream(req *client.QueryRequest, stream client.Ingester_
 	if err != nil {
 		return err
 	}
+	matchers, shardInfo, err := ExtractIngesterShardInfo(matchers)
+	if err != nil {
+		return err
+	}
 
 	defer shardMatcher.Close()
 
@@ -2262,7 +2303,7 @@ func (i *Ingester) QueryStream(req *client.QueryRequest, stream client.Ingester_
 	numSeries := 0
 	totalDataBytes := 0
 	numChunks := 0
-	numSeries, numSamples, totalDataBytes, numChunks, err = i.queryStreamChunks(ctx, db, int64(from), int64(through), matchers, shardMatcher, stream)
+	numSeries, numSamples, totalDataBytes, numChunks, err = i.queryStreamChunks(ctx, db, int64(from), int64(through), matchers, shardMatcher, shardInfo, stream)
 
 	if err != nil {
 		return err
@@ -2302,7 +2343,7 @@ func (i *Ingester) trackInflightQueryRequest() (func(), error) {
 }
 
 // queryStreamChunks streams metrics from a TSDB. This implements the client.IngesterServer interface
-func (i *Ingester) queryStreamChunks(ctx context.Context, db *userTSDB, from, through int64, matchers []*labels.Matcher, sm *storepb.ShardMatcher, stream client.Ingester_QueryStreamServer) (numSeries, numSamples, totalBatchSizeBytes, numChunks int, _ error) {
+func (i *Ingester) queryStreamChunks(ctx context.Context, db *userTSDB, from, through int64, matchers []*labels.Matcher, sm *storepb.ShardMatcher, shardInfo *IngesterShardInfo, stream client.Ingester_QueryStreamServer) (numSeries, numSamples, totalBatchSizeBytes, numChunks int, _ error) {
 	q, err := db.ChunkQuerier(from, through)
 	if err != nil {
 		return 0, 0, 0, 0, err
@@ -2317,6 +2358,10 @@ func (i *Ingester) queryStreamChunks(ctx context.Context, db *userTSDB, from, th
 		Start:           from,
 		End:             through,
 		DisableTrimming: i.cfg.DisableChunkTrimming,
+	}
+	if shardInfo.ShardCount > 0 {
+		hints.ShardCount = uint64(shardInfo.ShardCount)
+		hints.ShardIndex = uint64(shardInfo.ShardIndex)
 	}
 	// It's not required to return sorted series because series are sorted by the Cortex querier.
 	ss := q.Select(ctx, false, hints, matchers...)
@@ -2609,6 +2654,7 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 		BlockChunkQuerierFunc:          i.blockChunkQuerierFunc(userID),
 		NewCompactorFunc:               newCompactorFunc,
 		BlockQuerierFunc:               i.blockQuerierFunc(),
+		EnableSharding:                 true,
 	}, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open TSDB: %s", udir)
