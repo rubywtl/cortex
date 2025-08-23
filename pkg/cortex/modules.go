@@ -367,6 +367,7 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 
 	t.Cfg.Worker.MaxConcurrentRequests = t.Cfg.Querier.MaxConcurrent
 	t.Cfg.Worker.TargetHeaders = t.Cfg.API.HTTPRequestHeadersToLog
+	t.Cfg.Worker.ListenPort = t.Cfg.Server.GRPCListenPort
 
 	// Create new map for caching partial results during distributed execution
 	var queryResultCache *distributed_execution.QueryResultCache
@@ -447,7 +448,6 @@ func (t *Cortex) initQuerier() (serv services.Service, err error) {
 		internalQuerierRouter = injectPool(internalQuerierRouter, querierPool)
 		//go watchQuerierRingAndUpdatePool(context.Background(), t.Ring, querierPool)
 	}
-
 	return querier_worker.NewQuerierWorker(t.Cfg.Worker, httpgrpc_server.NewServer(internalQuerierRouter), util_log.Logger, prometheus.DefaultRegisterer, t.Cfg.Querier.DistributedExecEnabled, queryResultCache)
 }
 

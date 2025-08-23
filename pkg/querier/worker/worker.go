@@ -128,8 +128,6 @@ func NewQuerierWorker(cfg Config, handler RequestHandler, log log.Logger, reg pr
 		}
 		querierAddr := net.JoinHostPort(ipAddr, strconv.Itoa(cfg.ListenPort))
 
-		processor, servs = newSchedulerProcessor(cfg, handler, log, reg, querierAddr)
-
 		address = cfg.SchedulerAddress
 		processor, servs = newSchedulerProcessor(cfg, handler, log, reg, querierAddr)
 

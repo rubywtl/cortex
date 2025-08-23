@@ -39,28 +39,57 @@ func (s *Fragment) IsEmpty() bool {
 func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment, error) {
 	newFragment := Fragment{}
 	fragments := []Fragment{}
-	nextChildrenIDs := []uint64{}
+
+	childIDs := []uint64{}
+	nextChildIDs := []uint64{}
+	var prevID uint64
 
 	logicalplan.TraverseBottomUp(nil, &node, func(parent, current *logicalplan.Node) bool {
-		if parent == nil { // if we have reached the root
-			newFragment = Fragment{
-				Node:       node,
-				FragmentID: getNewID(),
-				ChildIDs:   nextChildrenIDs,
-				IsRoot:     true,
+
+		curlen := len(childIDs)
+
+		if parent == nil { // root fragment
+			if len(nextChildIDs) < 2 {
+				newFragment = Fragment{
+					Node:       node,
+					FragmentID: getNewID(),
+					ChildIDs:   []uint64{},
+					IsRoot:     true,
+				}
+			} else {
+				newFragment = Fragment{
+					Node:       node,
+					FragmentID: getNewID(),
+					ChildIDs:   []uint64{nextChildIDs[len(nextChildIDs)-2], nextChildIDs[len(nextChildIDs)-1]},
+					IsRoot:     true,
+				}
 			}
+
 			fragments = append(fragments, newFragment)
-			return false // break the loop
-		}
-		if RemoteNode == (*parent).Type() {
-			newFragment = Fragment{
-				Node:       *current,
-				FragmentID: getNewID(),
-				ChildIDs:   []uint64{},
-				IsRoot:     false,
+
+		} else if RemoteNode == (*current).Type() {
+			nextChildIDs = append(nextChildIDs, prevID)
+
+		} else if RemoteNode == (*parent).Type() {
+			if curlen <= 2 {
+				newFragment = Fragment{
+					Node:       *current,
+					FragmentID: getNewID(),
+					ChildIDs:   []uint64{},
+					IsRoot:     false,
+				}
+				childIDs = append(childIDs, newFragment.FragmentID)
+			} else {
+				newFragment = Fragment{
+					Node:       node,
+					FragmentID: getNewID(),
+					ChildIDs:   []uint64{childIDs[curlen-2], childIDs[curlen-1]},
+					IsRoot:     false,
+				}
+				childIDs = []uint64{}
 			}
+			prevID = newFragment.FragmentID
 			fragments = append(fragments, newFragment)
-			nextChildrenIDs = append(nextChildrenIDs, newFragment.FragmentID)
 
 			// append remote node information that will be used in the execution stage
 			key := MakeFragmentKey(queryID, newFragment.FragmentID)
@@ -82,3 +111,74 @@ func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment,
 		}}, nil
 	}
 }
+
+//
+//func TraverseDown(parent *Node, current *Node, layer int,
+//	transform func(parent *Node, current *Node, layer int) (bool, bool)) (bool, bool) {
+//	var stop bool
+//	layer = layer + 1
+//
+//	for _, c := range (*current).Children() {
+//		newStop, _ := TraverseDown(current, c, layer, transform)
+//		stop = newStop || stop
+//	}
+//	if stop {
+//		return false, false
+//	}
+//	return transform(parent, current, layer)
+//}
+//
+//func FragmentLogicalPlanNode2(queryID uint64, node logicalplan.Node) ([]Fragment, error) {
+//	newFragment := Fragment{}
+//	fragments := []Fragment{}
+//
+//	nextChildIDs := make(map[int][]uint64, 0)
+//
+//	layer := 0
+//
+//	TraverseDown(nil, &node, layer, func(parent, current *logicalplan.Node, layer int) (stop bool, remote bool) {
+//
+//		if parent == nil { // root fragment
+//			newFragment = Fragment{
+//				Node:       node,
+//				FragmentID: getNewID(),
+//				ChildIDs:   nextChildIDs[layer],
+//				IsRoot:     true,
+//			}
+//			fragments = append(fragments, newFragment)
+//			return false, true
+//		} else if RemoteNode == (*parent).Type() {
+//			newFragment = Fragment{
+//				Node:       node,
+//				FragmentID: getNewID(),
+//				ChildIDs:   nextChildIDs[layer],
+//				IsRoot:     false,
+//			}
+//			return false, true
+//		}
+//
+//		nextChildIDs[layer-1] = append(nextChildIDs[layer-1], newFragment.FragmentID)
+//
+//		fragments = append(fragments, newFragment)
+//
+//		// append remote node information that will be used in the execution stage
+//		key := MakeFragmentKey(queryID, newFragment.FragmentID)
+//		(*parent).(*Remote).FragmentKey = key
+//
+//		//isLeaf = false
+//		return false, false
+//	})
+//
+//	if fragments != nil {
+//		return fragments, nil
+//	} else {
+//		// for non-query API calls
+//		// --> treat as root fragment and immediately return the result
+//		return []Fragment{{
+//			Node:       node,
+//			FragmentID: uint64(0),
+//			ChildIDs:   []uint64{},
+//			IsRoot:     true,
+//		}}, nil
+//	}
+//}

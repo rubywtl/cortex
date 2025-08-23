@@ -22,7 +22,8 @@ type NodeType = logicalplan.NodeType
 type Node = logicalplan.Node
 
 const (
-	RemoteNode = "RemoteNode"
+	RemoteNode                 = "RemoteNode"
+	ShardedRemoteExecutionNode = "ShardedRemoteExecutionNode"
 )
 
 // (to verify interface implementations)

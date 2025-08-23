@@ -27,6 +27,10 @@ func TestUnmarshalWithLogicalPlan(t *testing.T) {
 				query: "sum(rate(http_requests_total[5m])) by (job)",
 			},
 			{
+				name:  "aggregation2",
+				query: "count(rate(http_requests_total[5m])) by (job)",
+			},
+			{
 				name:  "complex query",
 				query: "sum(rate(http_requests_total{job='prometheus'}[5m])) by (job) / sum(rate(node_cpu_seconds_total[5m])) by (job)",
 			},
