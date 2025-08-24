@@ -111,6 +111,7 @@ func newRemoteAggregation(rootAggregation *logicalplan.Aggregation, shardNum int
 				Expr:     rc,
 				Param:    rootAggregation.Param,
 				Grouping: rootAggregation.Grouping,
+				Without:  rootAggregation.Without,
 			}}, shardNum, i)
 		nodes = append(nodes, rc)
 	}

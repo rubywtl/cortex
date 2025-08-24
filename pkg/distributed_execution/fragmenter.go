@@ -2,6 +2,7 @@ package distributed_execution
 
 import (
 	"encoding/binary"
+
 	"github.com/google/uuid"
 	"github.com/thanos-io/promql-engine/logicalplan"
 )
@@ -37,68 +38,69 @@ func (s *Fragment) IsEmpty() bool {
 // FragmentLogicalPlanNode fragment the logical plan by the remote node
 // and inserts the child fragment information into it
 func FragmentLogicalPlanNode(queryID uint64, node logicalplan.Node) ([]Fragment, error) {
-	newFragment := Fragment{}
 	fragments := []Fragment{}
 
-	childIDs := []uint64{}
-	nextChildIDs := []uint64{}
-	var prevID uint64
+	nodeToFragmentID := make(map[*Node]uint64)
+	nodeToSubtreeFragmentIDs := make(map[*Node][]uint64)
 
-	logicalplan.TraverseBottomUp(nil, &node, func(parent, current *logicalplan.Node) bool {
+	logicalplan.TraverseBottomUp(nil, &node, func(parent, current *Node) bool {
+		childFragmentIDs := make(map[uint64]bool)
+		children := (*current).Children()
 
-		curlen := len(childIDs)
+		for _, child := range children {
+			if subtreeIDs, exists := nodeToSubtreeFragmentIDs[child]; exists {
+				for _, fragmentID := range subtreeIDs {
+					childFragmentIDs[fragmentID] = true
+				}
+			}
+		}
+
+		childIDs := make([]uint64, 0, len(childFragmentIDs))
+		for fragmentID := range childFragmentIDs {
+			childIDs = append(childIDs, fragmentID)
+		}
 
 		if parent == nil { // root fragment
-			if len(nextChildIDs) < 2 {
-				newFragment = Fragment{
-					Node:       node,
-					FragmentID: getNewID(),
-					ChildIDs:   []uint64{},
-					IsRoot:     true,
-				}
-			} else {
-				newFragment = Fragment{
-					Node:       node,
-					FragmentID: getNewID(),
-					ChildIDs:   []uint64{nextChildIDs[len(nextChildIDs)-2], nextChildIDs[len(nextChildIDs)-1]},
-					IsRoot:     true,
-				}
+			newFragment := Fragment{
+				Node:       *current,
+				FragmentID: getNewID(),
+				ChildIDs:   childIDs,
+				IsRoot:     true,
 			}
 
 			fragments = append(fragments, newFragment)
+
+			// Cache subtree fragment IDs for this node
+			nodeToSubtreeFragmentIDs[current] = childIDs
 
 		} else if RemoteNode == (*current).Type() {
-			nextChildIDs = append(nextChildIDs, prevID)
+			remoteNode := (*current).(*Remote)
+			fragmentID := getNewID()
+			nodeToFragmentID[current] = fragmentID
 
-		} else if RemoteNode == (*parent).Type() {
-			if curlen <= 2 {
-				newFragment = Fragment{
-					Node:       *current,
-					FragmentID: getNewID(),
-					ChildIDs:   []uint64{},
-					IsRoot:     false,
-				}
-				childIDs = append(childIDs, newFragment.FragmentID)
-			} else {
-				newFragment = Fragment{
-					Node:       node,
-					FragmentID: getNewID(),
-					ChildIDs:   []uint64{childIDs[curlen-2], childIDs[curlen-1]},
-					IsRoot:     false,
-				}
-				childIDs = []uint64{}
+			// Set the fragment key for the remote node
+			key := MakeFragmentKey(queryID, fragmentID)
+			remoteNode.FragmentKey = key
+
+			newFragment := Fragment{
+				Node:       remoteNode.Expr,
+				FragmentID: fragmentID,
+				ChildIDs:   childIDs,
+				IsRoot:     false,
 			}
-			prevID = newFragment.FragmentID
+
 			fragments = append(fragments, newFragment)
 
-			// append remote node information that will be used in the execution stage
-			key := MakeFragmentKey(queryID, newFragment.FragmentID)
-			(*parent).(*Remote).FragmentKey = key
+			subtreeIDs := append([]uint64{fragmentID}, childIDs...)
+			nodeToSubtreeFragmentIDs[current] = subtreeIDs
+		} else {
+			nodeToSubtreeFragmentIDs[current] = childIDs
 		}
+
 		return false
 	})
 
-	if fragments != nil {
+	if len(fragments) > 0 {
 		return fragments, nil
 	} else {
 		// for non-query API calls

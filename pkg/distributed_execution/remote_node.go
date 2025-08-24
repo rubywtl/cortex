@@ -238,7 +238,7 @@ func (d *DistributedRemoteExecution) Next(ctx context.Context) ([]model.StepVect
 
 	// return from buffer first
 	if d.buffer != nil && d.bufferIndex < len(d.buffer) {
-		end := d.bufferIndex + int(d.batchSize)
+		end := d.bufferIndex + int(d.numSteps)
 		if end > len(d.buffer) {
 			end = len(d.buffer)
 		}
