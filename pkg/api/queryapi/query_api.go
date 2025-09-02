@@ -109,6 +109,16 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 	ctx = engine.AddEngineTypeToContext(ctx, r)
 	ctx = querier.AddBlockStoreTypeToContext(ctx, r.Header.Get(querier.BlockStoreTypeHeader))
 
+	var isRoot bool
+	var queryID, fragmentID uint64
+	if q.distributedExecEnabled {
+		isRoot, queryID, fragmentID, _, _ = distributed_execution.ExtractFragmentMetaData(ctx)
+		if !isRoot {
+			key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
+			q.queryResultCache.InitWriting(key)
+		}
+	}
+
 	var qry promql.Query
 	startTime := convertMsToTime(start)
 	endTime := convertMsToTime(end)
@@ -118,10 +128,22 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 	if len(byteLP) != 0 {
 		logicalPlan, err := distributed_execution.Unmarshal(byteLP)
 		if err != nil {
+			if q.distributedExecEnabled {
+				if !isRoot {
+					key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
+					q.queryResultCache.SetError(key)
+				}
+			}
 			return apiFuncResult{nil, &apiError{errorInternal, fmt.Errorf("invalid logical plan: %v", err)}, nil, nil}
 		}
 		qry, err = q.queryEngine.MakeRangeQueryFromPlan(ctx, q.queryable, opts, logicalPlan, startTime, endTime, stepDuration, r.FormValue("query"))
 		if err != nil {
+			if q.distributedExecEnabled {
+				if !isRoot {
+					key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
+					q.queryResultCache.SetError(key)
+				}
+			}
 			return apiFuncResult{nil, &apiError{errorInternal, fmt.Errorf("failed to create range query from logical plan: %v", err)}, nil, nil}
 		}
 	} else { // if there is logical plan field is empty, fall back
@@ -141,14 +163,6 @@ func (q *QueryAPI) RangeQueryHandler(r *http.Request) (result apiFuncResult) {
 	}()
 
 	ctx = httputil.ContextFromRequest(ctx, r)
-
-	if q.distributedExecEnabled {
-		isRoot, queryID, fragmentID, _, _ := distributed_execution.ExtractFragmentMetaData(ctx)
-		if !isRoot {
-			key := distributed_execution.MakeFragmentKey(queryID, fragmentID)
-			q.queryResultCache.InitWriting(key)
-		}
-	}
 
 	res := qry.Exec(ctx)
 	if res.Err != nil {
