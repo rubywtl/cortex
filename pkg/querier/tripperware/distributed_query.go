@@ -72,7 +72,11 @@ func (d distributedQueryMiddleware) newLogicalPlan(qs string, start time.Time, e
 	}
 	optimizedPlan, _ := logicalPlan.Optimize(d.optimizers)
 
-	return &optimizedPlan, nil
+	dOptimizer := DistributedOptimizer{}
+	dOptimizedPlanNode, _ := dOptimizer.Optimize(optimizedPlan.Root(), &qOpts)
+	lp := logicalplan.New(dOptimizedPlanNode, &qOpts, planOpts)
+
+	return &lp, nil
 }
 
 func (d distributedQueryMiddleware) Do(ctx context.Context, r Request) (Response, error) {
